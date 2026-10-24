@@ -8,11 +8,8 @@ const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabi
 /**
  * Accessible dialog for adding a timeline event.
  *
- * Escape handling note: QuickExit listens for Escape on `window` to leave the
- * site. While this dialog is open we intercept Escape in the *capture* phase
- * and stop propagation, so Escape closes the dialog instead of exiting. With
- * no dialog open, Escape still quick-exits exactly as before — QuickExit
- * itself is untouched.
+ * Note on Escape: Escape is deliberately NOT intercepted here so QuickExit's
+ * global Escape handler can trigger at all times, even while this dialog is open.
  *
  * @param {{
  *   open: boolean,
@@ -54,18 +51,11 @@ export default function AddEventDialog({ open, onClose, onSubmit, evidenceOption
     };
   }, [open]);
 
-  // Escape-to-close + focus trap.
+  // Focus trap while open (Escape is left untouched so QuickExit triggers).
   useEffect(() => {
     if (!open) return undefined;
 
     function onKeyDownCapture(e) {
-      if (e.key === 'Escape') {
-        // Stop QuickExit's window listener from also firing.
-        e.stopPropagation();
-        e.preventDefault();
-        onClose();
-        return;
-      }
       if (e.key === 'Tab') {
         const nodes = dialogRef.current?.querySelectorAll(FOCUSABLE);
         if (!nodes || nodes.length === 0) return;
@@ -84,7 +74,7 @@ export default function AddEventDialog({ open, onClose, onSubmit, evidenceOption
 
     window.addEventListener('keydown', onKeyDownCapture, true);
     return () => window.removeEventListener('keydown', onKeyDownCapture, true);
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
