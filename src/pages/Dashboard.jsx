@@ -5,21 +5,28 @@ import Button from '../components/Button';
 import StatCard from '../components/StatCard';
 import StatusChip from '../components/StatusChip';
 import EmptyState from '../components/EmptyState';
-import { mockCases } from '../data/mockData';
+import { useCases } from '../hooks/useCases';
 import styles from './Dashboard.module.css';
 
 function relativeDate(iso) {
   return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-export default function Dashboard() {
+/**
+ * @param {{ onNewCase?: () => void }} props
+ * Person 3: pass `onNewCase` to open your case-creation flow. With no
+ * handler the button keeps its current placeholder behaviour (no-op), so
+ * you can wire this from a parent without editing this file.
+ */
+export default function Dashboard({ onNewCase }) {
   const [query, setQuery] = useState('');
+  const { data: cases } = useCases();
 
-  const filtered = mockCases.filter((c) =>
+  const filtered = cases.filter((c) =>
     c.title.toLowerCase().includes(query.trim().toLowerCase())
   );
-  const totalEvidence = mockCases.reduce((sum, c) => sum + c.evidenceCount, 0);
-  const activeCount = mockCases.filter((c) => c.status !== 'CLOSED').length;
+  const totalEvidence = cases.reduce((sum, c) => sum + c.evidenceCount, 0);
+  const activeCount = cases.filter((c) => c.status !== 'CLOSED').length;
 
   return (
     <div className={styles.wrap}>
@@ -28,8 +35,8 @@ export default function Dashboard() {
           <h1 className={styles.title}>My cases</h1>
           <p className={styles.subtitle}>Everything here stays private to you.</p>
         </div>
-        {/* Case creation is Person 3's scope — presentational for now. */}
-        <Button iconLeft={<Plus />}>New case</Button>
+        {/* Case creation is Person 3's scope — presentational until onNewCase is supplied. */}
+        <Button iconLeft={<Plus />} onClick={onNewCase}>New case</Button>
       </header>
 
       <section className={styles.stats} aria-label="Summary">
@@ -52,7 +59,7 @@ export default function Dashboard() {
           />
         </div>
         <p className={styles.resultCount} role="status">
-          {filtered.length} of {mockCases.length} {mockCases.length === 1 ? 'case' : 'cases'}
+          {filtered.length} of {cases.length} {cases.length === 1 ? 'case' : 'cases'}
         </p>
       </div>
 

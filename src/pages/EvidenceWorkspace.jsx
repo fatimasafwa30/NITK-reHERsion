@@ -6,7 +6,8 @@ import {
 import Button from '../components/Button';
 import StatusChip from '../components/StatusChip';
 import EmptyState from '../components/EmptyState';
-import { getCaseById, mockEvidenceByCase } from '../data/mockData';
+import { useCase } from '../hooks/useCase';
+import { useEvidenceForCase } from '../hooks/useEvidenceForCase';
 import styles from './EvidenceWorkspace.module.css';
 
 const FILTERS = [
@@ -52,10 +53,16 @@ function HashCell({ hash }) {
   );
 }
 
-export default function EvidenceWorkspace() {
+/**
+ * @param {{ onAddEvidence?: () => void }} props
+ * Person 2: pass `onAddEvidence` to open your upload + hashing flow. With no
+ * handler the dropzone stays presentational, so you can wire real behaviour
+ * from a parent without editing this file.
+ */
+export default function EvidenceWorkspace({ onAddEvidence }) {
   const { caseId } = useParams();
-  const caseRecord = getCaseById(caseId);
-  const allEvidence = mockEvidenceByCase[caseId] || [];
+  const { data: caseRecord } = useCase(caseId);
+  const { data: allEvidence } = useEvidenceForCase(caseId);
 
   const [filter, setFilter] = useState('ALL');
   const [query, setQuery] = useState('');
@@ -104,7 +111,9 @@ export default function EvidenceWorkspace() {
           <p className={styles.dropTitle}>Add evidence to this case</p>
           <p className={styles.dropHint}>Screenshots, photos, PDFs or audio. Files stay on your device.</p>
         </div>
-        <Button iconLeft={<UploadCloud />} className={styles.dropBtn}>Choose files</Button>
+        <Button iconLeft={<UploadCloud />} className={styles.dropBtn} onClick={onAddEvidence}>
+          Choose files
+        </Button>
       </div>
 
       <div className={styles.toolbar}>

@@ -1,9 +1,13 @@
+import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Plus, FolderOpen, FileText, CircleHelp, ArrowRight, CalendarPlus } from 'lucide-react';
+import { ArrowLeft, Plus, FolderOpen, FileText, CircleHelp, ArrowRight, CalendarPlus, FileDown } from 'lucide-react';
 import Button from '../components/Button';
 import StatusChip from '../components/StatusChip';
 import EmptyState from '../components/EmptyState';
-import { getCaseById, mockEvidenceByCase, mockTimelineByCase } from '../data/mockData';
+import AddEventDialog from '../components/AddEventDialog';
+import { useCase } from '../hooks/useCase';
+import { useEvidenceForCase } from '../hooks/useEvidenceForCase';
+import { useTimelineForCase } from '../hooks/useTimelineForCase';
 import styles from './CaseOverview.module.css';
 
 function formatWhen(iso) {
@@ -12,11 +16,24 @@ function formatWhen(iso) {
   });
 }
 
-export default function CaseOverview() {
+/**
+ * @param {{
+ *   onAddEvidence?: () => void,
+ *   onAddTimelineEvent?: (event: object) => void,
+ * }} props
+ * Person 2: pass `onAddEvidence` to open your upload flow, and
+ * `onAddTimelineEvent` to persist events the user adds here. Without them
+ * the page keeps its current local-only behaviour.
+ */
+export default function CaseOverview({ onAddEvidence, onAddTimelineEvent }) {
   const { caseId } = useParams();
-  const caseRecord = getCaseById(caseId);
-  const evidence = mockEvidenceByCase[caseId] || [];
-  const timeline = mockTimelineByCase[caseId] || [];
+  const { data: caseRecord } = useCase(caseId);
+  const { data: evidence } = useEvidenceForCase(caseId);
+  const { data: timelineFromStore } = useTimelineForCase(caseId);
+
+  const [dialogOpen, setDialogOpen] = useState(false);
+  // Events added in this session only — nothing is persisted yet.
+  const [localEvents, setLocalEvents] = useState([]);
 
   if (!caseRecord) {
     return (
@@ -29,7 +46,13 @@ export default function CaseOverview() {
     );
   }
 
+  const timeline = [...timelineFromStore, ...localEvents];
   const verifiedCount = evidence.filter((e) => e.verificationStatus === 'MATCH').length;
+
+  function handleAddEvent(event) {
+    setLocalEvents((prev) => [...prev, event]);
+    onAddTimelineEvent?.(event);
+  }
 
   return (
     <div className={styles.wrap}>
@@ -49,12 +72,17 @@ export default function CaseOverview() {
       </header>
 
       <div className={styles.grid}>
-        {/* ---------- Main column: timeline ---------- */}
         <section className={styles.timelineCol} aria-labelledby="timeline-heading">
           <div className={styles.sectionHead}>
             <h2 id="timeline-heading" className={styles.sectionTitle}>Timeline</h2>
-            {/* Timeline entry is Person 2's module — affordance only. */}
-            <Button variant="ghost" size="sm" iconLeft={<CalendarPlus />}>Add event</Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              iconLeft={<CalendarPlus />}
+              onClick={() => setDialogOpen(true)}
+            >
+              Add event
+            </Button>
           </div>
 
           {timeline.length === 0 ? (
@@ -88,7 +116,6 @@ export default function CaseOverview() {
           )}
         </section>
 
-        {/* ---------- Side panel: sticky summary + actions ---------- */}
         <aside className={styles.side}>
           <div className={styles.sideInner}>
             <div className={styles.panel}>
@@ -120,16 +147,27 @@ export default function CaseOverview() {
             <div className={styles.panel}>
               <h2 className={styles.panelTitle}>Actions</h2>
               <div className={styles.actionStack}>
-                <Button variant="ghost" full iconLeft={<Plus />}>Add evidence</Button>
-                <Button variant="quiet" full>Export case dossier</Button>
+                <Button variant="ghost" full iconLeft={<Plus />} onClick={onAddEvidence}>
+                  Add evidence
+                </Button>
+                <Button to={`/case/${caseId}/dossier`} variant="ghost" full iconLeft={<FileDown />}>
+                  Export dossier
+                </Button>
               </div>
               <p className={styles.panelNote}>
-                Dossier export arrives with the reporting module.
+                Dossier download arrives with the reporting module.
               </p>
             </div>
           </div>
         </aside>
       </div>
+
+      <AddEventDialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        onSubmit={handleAddEvent}
+        evidenceOptions={evidence}
+      />
     </div>
   );
 }
