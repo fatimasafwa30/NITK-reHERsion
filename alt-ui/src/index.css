@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #FBFAF7;
+  --color-surface: #FFFFFF;
+  --color-ink: #1C1B1A;
+  --color-muted: #5F5C57;
+  --color-border: #E8E4DC;
+
+  --color-accent: #0F5E5A;
+  --color-accent-soft: #E6F0EE;
+
+  --color-verified: #1F7A4D;
+  --color-unverified: #8A6A12;
+  --color-mismatch: #A3362E;
+
+  --font-sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-serif: 'Source Serif 4', Georgia, serif;
+}
+
+:root {
+  --bg-paper: #FBFAF7;
+  --bg-surface: #FFFFFF;
+  --text-ink: #1C1B1A;
+  --text-muted: #5F5C57;
+  --border-color: #E8E4DC;
+  --accent-color: #0F5E5A;
+  --accent-soft-color: #E6F0EE;
+}
+
+html {
+  font-family: var(--font-sans);
+  background-color: #FBFAF7;
+  color: #1C1B1A;
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Print styles for dossier and printable pages */
+@media print {
+  body {
+    background-color: #FFFFFF !important;
+    color: #000000 !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  .page-break {
+    page-break-before: always;
+  }
+}
