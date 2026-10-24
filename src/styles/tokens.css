@@ -1,0 +1,78 @@
+/*
+  VeraTrace design tokens.
+  Palette is deliberately calm and low-arousal (soft indigo/teal, warm neutral
+  paper background) rather than clinical white or alarm-red — this is a tool
+  people may open while frightened or stressed, so nothing should visually
+  spike urgency except explicit warning states.
+*/
+:root {
+  /* Color — brand */
+  --color-primary-900: #1e2a52;
+  --color-primary-700: #2f3f78;
+  --color-primary-600: #3c4f94;
+  --color-primary-500: #5065b0;
+  --color-primary-100: #e8ebf7;
+
+  --color-accent-600: #0f8b8d;
+  --color-accent-500: #15a3a5;
+  --color-accent-100: #e1f5f5;
+
+  /* Color — neutrals (warm, not clinical) */
+  --color-ink-900: #211f2b;
+  --color-ink-700: #44414f;
+  --color-ink-500: #6e6b78;
+  --color-ink-300: #a6a3ae;
+  --color-ink-100: #e9e7ee;
+
+  --color-paper-0: #ffffff;
+  --color-paper-50: #faf9fc;
+  --color-paper-100: #f3f1f8;
+  --color-border: #e1dee9;
+
+  /* Color — status (reserved for genuinely meaningful states only) */
+  --color-success-600: #1a7f46;
+  --color-success-100: #e3f6ea;
+  --color-warning-600: #9a6300;
+  --color-warning-100: #fdf0d9;
+  --color-danger-600: #b3261e;
+  --color-danger-100: #fbe6e4;
+  --color-neutral-600: #5c5968;
+  --color-neutral-100: #ece9f2;
+
+  /* Typography */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-md: 1.125rem;
+  --font-size-lg: 1.375rem;
+  --font-size-xl: 1.75rem;
+  --font-size-2xl: 2.25rem;
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.55;
+
+  /* Spacing scale (4px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Radius & shadow */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+  --shadow-sm: 0 1px 2px rgba(33, 31, 43, 0.06);
+  --shadow-md: 0 4px 16px rgba(33, 31, 43, 0.08);
+  --shadow-focus: 0 0 0 3px var(--color-accent-100);
+
+  /* Layout */
+  --max-width-page: 1120px;
+  --nav-height: 64px;
+}

@@ -1,0 +1,91 @@
+.hero {
+  background: linear-gradient(180deg, var(--color-primary-100) 0%, var(--color-paper-50) 100%);
+  padding: var(--space-16) 0 var(--space-12);
+}
+
+.eyebrow {
+  color: var(--color-accent-600);
+  font-weight: 700;
+  font-size: var(--font-size-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 var(--space-3);
+}
+
+.heroTitle {
+  font-size: var(--font-size-2xl);
+  max-width: 18ch;
+  margin-bottom: var(--space-4);
+}
+
+.heroSubtitle {
+  font-size: var(--font-size-md);
+  color: var(--color-ink-700);
+  max-width: 56ch;
+  margin-bottom: var(--space-6);
+}
+
+.heroActions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.section {
+  padding: var(--space-12) 0;
+}
+
+.stepsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-5);
+  margin-top: var(--space-6);
+}
+
+.stepCard {
+  position: relative;
+}
+
+.stepNumber {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--color-accent-100);
+  color: var(--color-accent-600);
+  font-weight: 800;
+  margin-bottom: var(--space-3);
+}
+
+.stepTitle {
+  font-size: var(--font-size-md);
+  margin-bottom: var(--space-2);
+}
+
+.stepBody {
+  color: var(--color-ink-500);
+  margin: 0;
+}
+
+.honestyCard {
+  background: var(--color-accent-100);
+  border-color: var(--color-accent-500);
+}
+
+.ctaCard {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-10) var(--space-5);
+}
+
+.ctaTitle { margin-bottom: 0; }
+
+@media (max-width: 860px) {
+  .stepsGrid { grid-template-columns: 1fr; }
+  .heroTitle { max-width: none; }
+}
