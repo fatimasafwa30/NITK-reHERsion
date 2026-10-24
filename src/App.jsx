@@ -1,25 +1,26 @@
 import { Routes, Route } from 'react-router-dom';
-import Navbar from './components/Navbar';
-import Footer from './components/Footer';
+import MarketingLayout from './layouts/MarketingLayout';
+import AppLayout from './layouts/AppLayout';
 import Landing from './pages/Landing';
 import Dashboard from './pages/Dashboard';
 import CaseOverview from './pages/CaseOverview';
 import EvidenceWorkspace from './pages/EvidenceWorkspace';
 
+/* URLs are unchanged — the layout routes only decide which shell wraps
+   each page (marketing chrome for the landing page, app shell with
+   sidebar for everything behind it). */
 export default function App() {
   return (
-    <>
-      <a href="#main-content" className="skip-link">Skip to main content</a>
-      <Navbar />
-      <main id="main-content">
-        <Routes>
-          <Route path="/" element={<Landing />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/case/:caseId" element={<CaseOverview />} />
-          <Route path="/case/:caseId/evidence" element={<EvidenceWorkspace />} />
-        </Routes>
-      </main>
-      <Footer />
-    </>
+    <Routes>
+      <Route element={<MarketingLayout />}>
+        <Route path="/" element={<Landing />} />
+      </Route>
+
+      <Route element={<AppLayout />}>
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/case/:caseId" element={<CaseOverview />} />
+        <Route path="/case/:caseId/evidence" element={<EvidenceWorkspace />} />
+      </Route>
+    </Routes>
   );
 }

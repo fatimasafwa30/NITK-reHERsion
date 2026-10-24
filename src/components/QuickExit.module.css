@@ -2,19 +2,33 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+  min-height: 44px;
   padding: var(--space-2) var(--space-4);
-  min-height: 40px;
   border-radius: var(--radius-pill);
-  border: 1px solid var(--color-danger-600);
-  background: var(--color-danger-100);
-  color: var(--color-danger-600);
-  font-weight: 700;
-  font-size: var(--font-size-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-body);
+  font-size: var(--text-sm);
+  font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
+  transition: background-color var(--dur) var(--ease),
+              border-color var(--dur) var(--ease),
+              color var(--dur) var(--ease);
 }
 
 .quickExit:hover {
-  background: var(--color-danger-600);
-  color: white;
+  background: #fbe8e6;
+  border-color: #e0b3ac;
+  color: var(--alert-fg);
+}
+
+.icon { width: 17px; height: 17px; flex-shrink: 0; }
+
+/* Icon-only below the smallest breakpoint, but still a 44px target */
+.compact { padding-inline: var(--space-3); }
+
+@media (max-width: 420px) {
+  .text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+  .quickExit { padding-inline: var(--space-3); }
 }

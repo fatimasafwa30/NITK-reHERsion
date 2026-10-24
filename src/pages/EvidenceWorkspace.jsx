@@ -1,10 +1,20 @@
-import { useParams } from 'react-router-dom';
+import { useState } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import {
+  ArrowLeft, UploadCloud, Search, Copy, Check, X, FileText, FolderOpen, Info,
+} from 'lucide-react';
 import Button from '../components/Button';
-import Card from '../components/Card';
-import StatusBadge from '../components/StatusBadge';
+import StatusChip from '../components/StatusChip';
 import EmptyState from '../components/EmptyState';
 import { getCaseById, mockEvidenceByCase } from '../data/mockData';
 import styles from './EvidenceWorkspace.module.css';
+
+const FILTERS = [
+  { key: 'ALL', label: 'All' },
+  { key: 'MATCH', label: 'Verified' },
+  { key: 'UNVERIFIED', label: 'Unverified' },
+  { key: 'MISMATCH', label: 'Changed' },
+];
 
 function formatBytes(n) {
   if (n < 1024) return `${n} B`;
@@ -12,73 +22,227 @@ function formatBytes(n) {
   return `${(n / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-export default function EvidenceWorkspace() {
-  const { caseId } = useParams();
-  const caseRecord = getCaseById(caseId);
-  const evidence = mockEvidenceByCase[caseId] || [];
+function formatWhen(iso) {
+  return new Date(iso).toLocaleString(undefined, {
+    day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+}
 
-  if (!caseRecord) {
-    return (
-      <div className="container">
-        <div className={styles.topPad}>
-          <EmptyState
-            title="Case not found"
-            action={<Button to="/dashboard">Back to my cases</Button>}
-          />
-        </div>
-      </div>
-    );
+function HashCell({ hash }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(hash);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      /* clipboard unavailable — the full hash is still in the title attribute */
+    }
   }
 
   return (
-    <div className="container">
-      <div className={styles.topPad}>
-        <Button to={`/case/${caseId}`} variant="ghost" className={styles.backLink}>
-          ← Back to {caseRecord.title}
-        </Button>
+    <span className={styles.hashCell}>
+      <code className={styles.hash} title={hash}>{hash.slice(0, 12)}…</code>
+      <button type="button" className={styles.copyBtn} onClick={copy}
+        aria-label={copied ? 'Hash copied' : 'Copy full hash'}>
+        {copied ? <Check strokeWidth={2.4} /> : <Copy strokeWidth={2} />}
+      </button>
+    </span>
+  );
+}
 
-        <div className={styles.header}>
-          <h1 className={styles.title}>Evidence workspace</h1>
-          {/* Upload & hashing are owned by Person 2's module; this button is a placeholder
-              so the layout is ready for that module to be dropped in. */}
-          <Button title="Hooked up once the evidence module is integrated">Add evidence</Button>
+export default function EvidenceWorkspace() {
+  const { caseId } = useParams();
+  const caseRecord = getCaseById(caseId);
+  const allEvidence = mockEvidenceByCase[caseId] || [];
+
+  const [filter, setFilter] = useState('ALL');
+  const [query, setQuery] = useState('');
+  const [selectedId, setSelectedId] = useState(null);
+
+  if (!caseRecord) {
+    return (
+      <EmptyState
+        icon={<FolderOpen strokeWidth={1.6} />}
+        title="Case not found"
+        action={<Button to="/dashboard" iconLeft={<ArrowLeft />}>Back to my cases</Button>}
+      />
+    );
+  }
+
+  const evidence = allEvidence
+    .filter((e) => (filter === 'ALL' ? true : e.verificationStatus === filter))
+    .filter((e) => e.fileName.toLowerCase().includes(query.trim().toLowerCase()));
+
+  const selected = allEvidence.find((e) => e.evidenceId === selectedId) || null;
+
+  return (
+    <div className={styles.wrap}>
+      <Link to={`/case/${caseId}`} className={styles.back}>
+        <ArrowLeft aria-hidden="true" strokeWidth={2} />
+        Back to case
+      </Link>
+
+      <header className={styles.header}>
+        <div>
+          <h1 className={styles.title}>Evidence</h1>
+          <p className={styles.subtitle}>{caseRecord.title}</p>
         </div>
-        <p className={styles.disclaimer}>
-          A matching hash shows a file hasn't changed since it was added here — it doesn't on its own prove
-          who created it or when the event happened.
-        </p>
+      </header>
 
-        {evidence.length === 0 ? (
-          <EmptyState title="No evidence added yet" description="Items you add will show up here with their recorded details." />
-        ) : (
+      <p className={styles.disclaimer}>
+        <Info aria-hidden="true" strokeWidth={2} />
+        A matching hash shows a file hasn't changed since it was added here. It doesn't prove who
+        created the file or when the incident happened.
+      </p>
+
+      {/* Upload surface — visual only; hashing belongs to the evidence module. */}
+      <div className={styles.dropzone}>
+        <span className={styles.dropIcon} aria-hidden="true"><UploadCloud strokeWidth={1.6} /></span>
+        <div className={styles.dropCopy}>
+          <p className={styles.dropTitle}>Add evidence to this case</p>
+          <p className={styles.dropHint}>Screenshots, photos, PDFs or audio. Files stay on your device.</p>
+        </div>
+        <Button iconLeft={<UploadCloud />} className={styles.dropBtn}>Choose files</Button>
+      </div>
+
+      <div className={styles.toolbar}>
+        <div className={styles.filters} role="group" aria-label="Filter by status">
+          {FILTERS.map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              className={`${styles.filter} ${filter === f.key ? styles.filterActive : ''}`}
+              aria-pressed={filter === f.key}
+              onClick={() => setFilter(f.key)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+
+        <div className={styles.searchWrap}>
+          <Search className={styles.searchIcon} aria-hidden="true" strokeWidth={2} />
+          <label className="visually-hidden" htmlFor="evidence-search">Search files</label>
+          <input
+            id="evidence-search"
+            type="search"
+            className={styles.search}
+            placeholder="Search files…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {evidence.length === 0 ? (
+        <EmptyState
+          compact
+          title={allEvidence.length === 0 ? 'No evidence added yet' : 'Nothing matches those filters'}
+          description={
+            allEvidence.length === 0
+              ? 'Items you add will show up here with their recorded details.'
+              : 'Try another status or clear the search.'
+          }
+          action={allEvidence.length > 0 && (
+            <Button variant="ghost" onClick={() => { setFilter('ALL'); setQuery(''); }}>Clear filters</Button>
+          )}
+        />
+      ) : (
+        <>
+          {/* Desktop: table */}
           <div className={styles.tableWrap}>
             <table className={styles.table}>
               <thead>
                 <tr>
-                  <th>File</th>
-                  <th>Type</th>
-                  <th>Size</th>
-                  <th>Recorded</th>
-                  <th>SHA-256</th>
-                  <th>Status</th>
+                  <th scope="col">File</th>
+                  <th scope="col">Recorded</th>
+                  <th scope="col">Size</th>
+                  <th scope="col">SHA-256</th>
+                  <th scope="col">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {evidence.map((item) => (
-                  <tr key={item.evidenceId}>
-                    <td className={styles.fileName}>{item.fileName}</td>
-                    <td>{item.mimeType}</td>
-                    <td>{formatBytes(item.sizeBytes)}</td>
-                    <td>{new Date(item.recordedAt).toLocaleString()}</td>
-                    <td className={styles.hash} title={item.sha256}>{item.sha256.slice(0, 16)}…</td>
-                    <td><StatusBadge status={item.verificationStatus} /></td>
+                  <tr
+                    key={item.evidenceId}
+                    className={selectedId === item.evidenceId ? styles.rowSelected : ''}
+                  >
+                    <td>
+                      <button type="button" className={styles.fileBtn} onClick={() => setSelectedId(item.evidenceId)}>
+                        <FileText className={styles.fileIcon} aria-hidden="true" strokeWidth={2} />
+                        <span className={styles.fileName}>{item.fileName}</span>
+                      </button>
+                    </td>
+                    <td className={styles.muted}>{formatWhen(item.recordedAt)}</td>
+                    <td className={styles.muted}>{formatBytes(item.sizeBytes)}</td>
+                    <td><HashCell hash={item.sha256} /></td>
+                    <td><StatusChip status={item.verificationStatus} size="sm" /></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        )}
-      </div>
+
+          {/* Mobile: stacked cards */}
+          <ul className={styles.cards}>
+            {evidence.map((item) => (
+              <li key={item.evidenceId}>
+                <button type="button" className={styles.card} onClick={() => setSelectedId(item.evidenceId)}>
+                  <span className={styles.cardTop}>
+                    <FileText className={styles.fileIcon} aria-hidden="true" strokeWidth={2} />
+                    <span className={styles.fileName}>{item.fileName}</span>
+                  </span>
+                  <span className={styles.cardMeta}>
+                    {formatBytes(item.sizeBytes)} · {formatWhen(item.recordedAt)}
+                  </span>
+                  <span className={styles.cardFoot}>
+                    <StatusChip status={item.verificationStatus} size="sm" />
+                    <code className={styles.hash}>{item.sha256.slice(0, 12)}…</code>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {/* Detail panel */}
+      {selected && (
+        <>
+          <div className={styles.scrim} onClick={() => setSelectedId(null)} aria-hidden="true" />
+          <aside className={styles.drawer} aria-label={`Details for ${selected.fileName}`}>
+            <div className={styles.drawerHead}>
+              <h2 className={styles.drawerTitle}>File details</h2>
+              <button type="button" className={styles.closeBtn} onClick={() => setSelectedId(null)} aria-label="Close details">
+                <X strokeWidth={2} />
+              </button>
+            </div>
+
+            <p className={styles.drawerFile}>{selected.fileName}</p>
+            <StatusChip status={selected.verificationStatus} />
+
+            <dl className={styles.drawerList}>
+              <div><dt>Type</dt><dd>{selected.mimeType}</dd></div>
+              <div><dt>Size</dt><dd>{formatBytes(selected.sizeBytes)}</dd></div>
+              <div><dt>Recorded</dt><dd>{formatWhen(selected.recordedAt)}</dd></div>
+              <div><dt>Evidence ID</dt><dd><code className={styles.hash}>{selected.evidenceId}</code></dd></div>
+            </dl>
+
+            <div className={styles.drawerHash}>
+              <dt>SHA-256</dt>
+              <dd><code className={styles.hashFull}>{selected.sha256}</code></dd>
+            </div>
+
+            <p className={styles.drawerNote}>
+              "Recorded" is the time VeraTrace saw this file — not a verified incident time.
+            </p>
+
+            <Button variant="ghost" full>Re-check this file</Button>
+          </aside>
+        </>
+      )}
     </div>
   );
 }

@@ -25,7 +25,9 @@
   --text-strong: #16203a;
   --text-body: #3d4559;
   --text-muted: #5c6478;
-  --text-faint: #767e92;
+  /* Lightest value that still clears WCAG AA 4.5:1 on sand-200, our
+     lightest-on-darkest text pairing. Do not lighten without re-checking. */
+  --text-faint: #646a7e;
 
   --surface: #ffffff;
   --surface-sunken: #faf6ef;
