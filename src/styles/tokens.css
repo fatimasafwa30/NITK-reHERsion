@@ -1,78 +1,127 @@
 /*
-  VeraTrace design tokens.
-  Palette is deliberately calm and low-arousal (soft indigo/teal, warm neutral
-  paper background) rather than clinical white or alarm-red — this is a tool
-  people may open while frightened or stressed, so nothing should visually
-  spike urgency except explicit warning states.
+  VeraTrace design tokens — single source of truth.
+
+  Design intent: a calm, warm, editorial surface for a serious subject.
+  The canvas is warm sand rather than clinical white; ink is a deep calm
+  indigo rather than black; one teal accent carries emphasis. Status colors
+  are never the only signal — every status also ships an icon and a label.
 */
+
 :root {
-  /* Color — brand */
-  --color-primary-900: #1e2a52;
-  --color-primary-700: #2f3f78;
-  --color-primary-600: #3c4f94;
-  --color-primary-500: #5065b0;
-  --color-primary-100: #e8ebf7;
+  /* ---- Brand ink (deep indigo) ---- */
+  --ink-900: #141c33;
+  --ink-800: #1d2846;
+  --ink-700: #2b3a63;
+  --ink-600: #3b4c7d;
+  --ink-500: #5569a0;
 
-  --color-accent-600: #0f8b8d;
-  --color-accent-500: #15a3a5;
-  --color-accent-100: #e1f5f5;
+  /* ---- Warm neutrals (canvas + text) ---- */
+  --sand-50: #fdfbf7;
+  --sand-100: #faf6ef;
+  --sand-200: #f3ece1;
+  --sand-300: #e8ded0;
+  --sand-400: #d6c9b6;
 
-  /* Color — neutrals (warm, not clinical) */
-  --color-ink-900: #211f2b;
-  --color-ink-700: #44414f;
-  --color-ink-500: #6e6b78;
-  --color-ink-300: #a6a3ae;
-  --color-ink-100: #e9e7ee;
+  --text-strong: #16203a;
+  --text-body: #3d4559;
+  --text-muted: #5c6478;
+  --text-faint: #767e92;
 
-  --color-paper-0: #ffffff;
-  --color-paper-50: #faf9fc;
-  --color-paper-100: #f3f1f8;
-  --color-border: #e1dee9;
+  --surface: #ffffff;
+  --surface-sunken: #faf6ef;
+  --surface-raised: #ffffff;
 
-  /* Color — status (reserved for genuinely meaningful states only) */
-  --color-success-600: #1a7f46;
-  --color-success-100: #e3f6ea;
-  --color-warning-600: #9a6300;
-  --color-warning-100: #fdf0d9;
-  --color-danger-600: #b3261e;
-  --color-danger-100: #fbe6e4;
-  --color-neutral-600: #5c5968;
-  --color-neutral-100: #ece9f2;
+  --border: #e6ddd0;
+  --border-strong: #d4c8b8;
 
-  /* Typography */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-size-xs: 0.75rem;
-  --font-size-sm: 0.875rem;
-  --font-size-base: 1rem;
-  --font-size-md: 1.125rem;
-  --font-size-lg: 1.375rem;
-  --font-size-xl: 1.75rem;
-  --font-size-2xl: 2.25rem;
-  --line-height-tight: 1.25;
-  --line-height-normal: 1.55;
+  /* ---- Accent (teal) ---- */
+  --accent-50: #eefaf8;
+  --accent-100: #d3f0ec;
+  --accent-500: #15807a;
+  --accent-600: #0f6b66;
+  --accent-700: #0b534f;
 
-  /* Spacing scale (4px base) */
+  /* ---- Warm highlight (used sparingly, editorial warmth) ---- */
+  --clay-100: #fbeee3;
+  --clay-500: #b4612f;
+  --clay-600: #944d23;
+
+  /* ---- Semantic status ---- */
+  --ok-bg: #e7f4ea;
+  --ok-fg: #1c6b36;
+  --ok-border: #bfe0c8;
+
+  --pending-bg: #fbf0dc;
+  --pending-fg: #8a5a12;
+  --pending-border: #ecd6ab;
+
+  --alert-bg: #fbe8e6;
+  --alert-fg: #a3291f;
+  --alert-border: #eec5c0;
+
+  --neutral-bg: #efeae1;
+  --neutral-fg: #4f5567;
+  --neutral-border: #ded5c7;
+
+  /* ---- Typography ---- */
+  --font-display: 'Source Serif 4 Variable', 'Source Serif 4', Georgia, 'Times New Roman', serif;
+  --font-sans: 'Inter Variable', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  --text-xs: 0.8125rem;   /* 13px — chips, table heads only */
+  --text-sm: 0.9375rem;   /* 15px — meta */
+  --text-base: 1.0625rem; /* 17px — body */
+  --text-md: 1.1875rem;   /* 19px — lead-in body */
+  --text-lg: 1.5rem;      /* 24px — card/section headings */
+  --text-xl: 1.9375rem;   /* 31px — page titles */
+  --text-2xl: 2.5rem;     /* 40px — section headlines */
+  --text-3xl: 3.25rem;    /* 52px — hero display */
+
+  --leading-tight: 1.12;
+  --leading-snug: 1.3;
+  --leading-normal: 1.6;
+
+  --tracking-tight: -0.02em;
+  --tracking-wide: 0.08em;
+
+  /* ---- Spacing (8px grid, with 4px half-steps) ---- */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
-  --space-8: 32px;
-  --space-10: 40px;
-  --space-12: 48px;
-  --space-16: 64px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 40px;
+  --space-8: 48px;
+  --space-9: 64px;
+  --space-10: 80px;
+  --space-11: 96px;
+  --space-12: 128px;
 
-  /* Radius & shadow */
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
+  /* ---- Radius ---- */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 28px;
   --radius-pill: 999px;
-  --shadow-sm: 0 1px 2px rgba(33, 31, 43, 0.06);
-  --shadow-md: 0 4px 16px rgba(33, 31, 43, 0.08);
-  --shadow-focus: 0 0 0 3px var(--color-accent-100);
 
-  /* Layout */
-  --max-width-page: 1120px;
-  --nav-height: 64px;
+  /* ---- Depth ---- */
+  --shadow-xs: 0 1px 2px rgba(20, 28, 51, 0.05);
+  --shadow-sm: 0 2px 6px rgba(20, 28, 51, 0.06);
+  --shadow-md: 0 10px 28px -12px rgba(20, 28, 51, 0.22);
+  --shadow-lg: 0 28px 60px -28px rgba(20, 28, 51, 0.32);
+  --ring: 0 0 0 3px rgba(21, 128, 122, 0.32);
+
+  /* ---- Layout ---- */
+  --page-max: 1200px;
+  --prose-max: 68ch;
+  --topbar-h: 68px;
+  --sidebar-w: 248px;
+  --mobilebar-h: 64px;
+
+  /* ---- Motion ---- */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --dur-fast: 120ms;
+  --dur: 200ms;
 }
