@@ -1,0 +1,364 @@
+@import 'tailwindcss';
+
+/* ---------------------------------------------------------------------------
+   VeraTrace design tokens.
+   Defined once here; nothing in the app hard-codes a colour, font or radius.
+   Light theme only — this is a document product, and documents are on paper.
+--------------------------------------------------------------------------- */
+@theme {
+  /* Surfaces, lightest to deepest */
+  --color-ivory: #faf8f5;
+  --color-paper: #ffffff;
+  --color-wash: #f1edf8;
+  --color-lilac-soft: #e8e2f3;
+  --color-lilac: #d9d0ec;
+  /* Opaque sheet tint — sheets stack, so they can never be translucent. */
+  --color-sheet: #f5f1fb;
+
+  /* Violets. `violet` is decorative / large-text only (4.4:1 on ivory).
+     `violet-deep` is the one strong colour for primary actions and links. */
+  --color-violet: #7c6aae;
+  --color-violet-deep: #55428a;
+  --color-violet-press: #463473;
+
+  /* Ink */
+  --color-plum: #2a1b3d;
+  --color-muted: #5e5470;
+
+  /* Semantic. Never used alone — always paired with an icon and a label.
+     Status colours only: they are not part of the brand palette. */
+  --color-alert: #9b2c4a;
+  --color-alert-wash: #fbf0f2;
+  --color-sage: #3f6b52;
+  --color-sage-wash: #f0f5f1;
+
+  /* Type */
+  --font-display: 'Fraunces Variable', 'Iowan Old Style', Georgia, serif;
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SFMono-Regular', monospace;
+
+  /* One radius system */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  /* Soft, low-opacity depth — never a drop-shadow cliché */
+  --shadow-sheet: 0 1px 2px rgba(42, 27, 61, 0.04), 0 8px 24px -12px rgba(42, 27, 61, 0.1);
+  --shadow-lift: 0 2px 4px rgba(42, 27, 61, 0.05), 0 16px 40px -16px rgba(42, 27, 61, 0.16);
+  --shadow-rail: 0 1px 0 rgba(42, 27, 61, 0.04);
+
+  /* Motion. Mirrors src/motion/tokens.js — change both together. */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-state: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur-base: 280ms;
+  --dur-slow: 520ms;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-ivory);
+    color: var(--color-plum);
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv05' 1, 'ss03' 1;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Visible, consistent focus ring everywhere. */
+  :focus-visible {
+    outline: 2px solid var(--color-violet-deep);
+    outline-offset: 2px;
+    border-radius: var(--radius-xs);
+  }
+
+  ::selection {
+    background: var(--color-lilac);
+    color: var(--color-plum);
+  }
+
+  h1,
+  h2,
+  h3 {
+    margin: 0;
+    font-weight: 400;
+  }
+
+  p {
+    margin: 0;
+  }
+
+  button {
+    font: inherit;
+  }
+}
+
+@utility display-xl {
+  font-family: var(--font-display);
+  font-size: clamp(2.5rem, 7vw, 4.75rem);
+  line-height: 0.98;
+  letter-spacing: -0.03em;
+  font-variation-settings: 'wght' 420, 'SOFT' 20;
+}
+
+@utility display-lg {
+  font-family: var(--font-display);
+  font-size: clamp(1.875rem, 4.2vw, 2.75rem);
+  line-height: 1.04;
+  letter-spacing: -0.025em;
+  font-variation-settings: 'wght' 440;
+}
+
+@utility display-md {
+  font-family: var(--font-display);
+  font-size: clamp(1.375rem, 2.6vw, 1.75rem);
+  line-height: 1.14;
+  letter-spacing: -0.018em;
+  font-variation-settings: 'wght' 450;
+}
+
+/* Small caps-ish eyebrow label used to open sections. */
+@utility eyebrow {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+@utility mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* Hairline rule used to divide dense information without boxing it in. */
+@utility rule {
+  border: 0;
+  border-top: 1px solid var(--color-lilac);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vt-reveal,
+  .vt-reveal[data-reveal='pending'] {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Print. The dossier is meant to be printed, so screen chrome goes away and
+   colour becomes ink-friendly.
+--------------------------------------------------------------------------- */
+@media print {
+  @page {
+    margin: 16mm 14mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  [data-print='hide'] {
+    display: none !important;
+  }
+
+  [data-print='section'] {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  [data-print='break-before'] {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  [data-print='sheet'],
+  [data-print='surface'] {
+    background: #fff !important;
+    box-shadow: none !important;
+    border-color: #999 !important;
+  }
+
+  a[href]::after {
+    content: '';
+  }
+
+  /* Nothing may be hidden mid-reveal on paper. */
+  .vt-reveal,
+  .vt-reveal[data-reveal='pending'] {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+
+  .print-ink {
+    color: #000 !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Entrance animations. Short, 8px of travel at most, and fully disabled by
+   the reduced-motion block above.
+--------------------------------------------------------------------------- */
+@keyframes vt-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes vt-dialog-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 8px));
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+}
+
+@keyframes vt-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Tooltips and popovers: fade plus a 6px settle, per side. */
+@keyframes vt-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* One short nudge for an error. Never the only signal — the text and icon
+   carry the meaning; this only draws the eye. */
+@keyframes vt-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  75% {
+    transform: translateX(4px);
+  }
+}
+
+@utility anim-fade {
+  animation: vt-fade-in var(--dur-base) var(--ease-out-soft);
+}
+
+/* Enter-only, deliberately.
+   Radix keeps an overlay or dialog mounted until the `closed` animation
+   reports `animationend`, and with an exit this short that event can be missed
+   — which leaves an invisible overlay sitting over the page and swallowing
+   clicks. A dismissal that always completes is worth more than 140ms of
+   polish, so these close immediately. */
+@utility anim-overlay {
+  animation: vt-overlay-in var(--dur-base) var(--ease-out-soft);
+}
+
+@utility anim-dialog {
+  animation: vt-dialog-in 180ms var(--ease-out-soft);
+}
+
+@utility anim-pop {
+  animation: vt-pop-in 150ms var(--ease-out-soft);
+}
+
+@utility anim-shake {
+  animation: vt-shake 220ms var(--ease-state);
+}
+
+/* A 2px lift with a soft shadow that fades in. The shadow lives on a
+   pseudo-element and only its opacity transitions — blur radius never
+   animates. A disabled control never lifts and never casts. */
+@utility vt-lift {
+  position: relative;
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: var(--shadow-lift);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-fast) var(--ease-state);
+  }
+
+  &:hover::after {
+    opacity: 1;
+  }
+
+  &:disabled::after,
+  &[aria-disabled='true']::after {
+    opacity: 0;
+  }
+}
+
+/* One soft ring, once, when something is sealed or verified. Opacity only. */
+@keyframes vt-glow {
+  0% {
+    opacity: 0;
+  }
+  35% {
+    opacity: 0.45;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@utility anim-glow {
+  animation: vt-glow 900ms var(--ease-out-soft) 200ms 1 both;
+}
+
+/* ---------------------------------------------------------------------------
+   Scroll reveal.
+
+   The element is authored at its final state. JavaScript only ever takes
+   visibility away, and only when motion is allowed — so no JavaScript, print,
+   and reduced motion all land on "visible, no transform".
+--------------------------------------------------------------------------- */
+.vt-reveal {
+  transition:
+    opacity var(--dur-slow) var(--ease-out-soft),
+    transform var(--dur-slow) var(--ease-out-soft);
+}
+
+.vt-reveal[data-reveal='pending'] {
+  opacity: 0;
+  transform: translateY(24px);
+}
+
+.vt-reveal[data-reveal='shown'] {
+  opacity: 1;
+  transform: none;
+}
