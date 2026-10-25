@@ -6,6 +6,8 @@ VeraTrace enables individuals, legal advocates, and investigators to catalog, cr
 
 All processing, hashing, and storage occur **entirely on the user's device**. Nothing is uploaded to external cloud servers, and original files are never altered.
 
+> 🌐 **Live Production Application:** [https://veratrace-app.vercel.app](https://veratrace-app.vercel.app)
+
 ---
 
 ## Table of Contents
