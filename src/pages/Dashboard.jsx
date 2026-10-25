@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, useReducedMotion } from 'motion/react';
-import { FolderClosed, Plus, Search, SlidersHorizontal } from 'lucide-react';
+import { Activity, FileDown, FolderClosed, Plus, Search, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { DURATION, EASE, stagger } from '../motion/tokens';
 import { Input, Select } from '../components/ui/Field';
@@ -12,7 +12,7 @@ import { useVera } from '../store/VeraStore';
 import { formatDate, relativeDay } from '../lib/format';
 
 export function Dashboard() {
-  const { cases, evidenceByCase } = useVera();
+  const { cases, evidenceByCase, loadDemoCase } = useVera();
   const navigate = useNavigate();
   const reduced = useReducedMotion();
 
@@ -48,77 +48,76 @@ export function Dashboard() {
           <h1 className="display-lg max-w-[24ch] text-plum">
             Everything you have put <em className="italic">on the record</em>.
           </h1>
-          <Button variant="primary" onClick={() => setNewCaseOpen(true)} className="shrink-0 max-sm:w-full">
-            <Plus aria-hidden="true" strokeWidth={1.5} className="size-4" />
-            New case
-          </Button>
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0 max-sm:w-full">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                loadDemoCase?.();
+                navigate('/case/VT-DEMO-2026');
+              }}
+              className="max-sm:flex-1 border-lilac text-plum hover:border-violet"
+            >
+              <Sparkles aria-hidden="true" strokeWidth={1.5} className="size-4 text-violet-deep" />
+              Load Demo Case
+            </Button>
+            <Button variant="primary" onClick={() => setNewCaseOpen(true)} className="max-sm:flex-1">
+              <Plus aria-hidden="true" strokeWidth={1.5} className="size-4" />
+              New case
+            </Button>
+          </div>
         </div>
       </header>
 
-      {/* One quiet line of figures, set like a caption rather than a dashboard. */}
-      <dl className="mono mt-10 flex flex-wrap items-baseline gap-x-3 gap-y-2 text-[0.8125rem] text-muted">
-        <div className="flex items-baseline gap-2">
-          <dt className="sr-only">Cases</dt>
-          <dd className="text-plum">{stats.cases}</dd>
-          <span>{stats.cases === 1 ? 'case' : 'cases'}</span>
+      {/* Metrics strip */}
+      <section aria-label="Case metrics" className="mt-10 grid grid-cols-2 gap-4 sm:grid-cols-3">
+        <div className="rounded-lg border border-lilac bg-paper p-5 shadow-sheet">
+          <p className="eyebrow">Active cases</p>
+          <p className="display-lg mt-2 text-plum">{stats.cases}</p>
         </div>
-        <span aria-hidden="true" className="text-lilac">
-          /
-        </span>
-        <div className="flex items-baseline gap-2">
-          <dt className="sr-only">Sealed files</dt>
-          <dd className="text-plum">{stats.files}</dd>
-          <span>sealed {stats.files === 1 ? 'file' : 'files'}</span>
+        <div className="rounded-lg border border-lilac bg-paper p-5 shadow-sheet">
+          <p className="eyebrow">Sealed files</p>
+          <p className="display-lg mt-2 text-plum">{stats.files}</p>
         </div>
-        <span aria-hidden="true" className="text-lilac">
-          /
-        </span>
-        <div className="flex items-baseline gap-2">
-          <dt className="sr-only">Last activity</dt>
-          <dd className="text-plum">{stats.latest ? relativeDay(stats.latest) : '—'}</dd>
-          <span>last activity</span>
+        <div className="col-span-2 rounded-lg border border-lilac bg-paper p-5 shadow-sheet sm:col-span-1">
+          <p className="eyebrow">Last updated</p>
+          <p className="mono mt-3 text-sm text-plum">
+            {stats.latest ? relativeDay(stats.latest) : '—'}
+          </p>
         </div>
-      </dl>
+      </section>
 
-      <hr className="rule mt-8" />
-
-      <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+      {/* Filter and search bar */}
+      <div className="mt-12 flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative flex-1">
           <Search
             aria-hidden="true"
-            strokeWidth={1.5}
             className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
           />
           <Input
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search cases"
-            aria-label="Search cases by title or summary"
+            placeholder="Search by case title or notes…"
             className="pl-9"
           />
         </div>
-        <div className="relative sm:w-52">
-          <SlidersHorizontal
-            aria-hidden="true"
-            strokeWidth={1.5}
-            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
-          />
+        <div className="flex items-center gap-2">
+          <SlidersHorizontal aria-hidden="true" className="size-4 text-muted sm:hidden" />
           <Select
             value={status}
             onChange={(event) => setStatus(event.target.value)}
             aria-label="Filter cases by status"
-            className="pl-9"
+            className="w-full sm:w-48"
           >
-            <option value="ALL">All statuses</option>
+            <option value="ALL">All cases</option>
             <option value="OPEN">Open</option>
-            <option value="IN_PROGRESS">In progress</option>
-            <option value="CLOSED">Closed</option>
+            <option value="PRESERVED">Preserved</option>
+            <option value="ARCHIVED">Archived</option>
           </Select>
         </div>
       </div>
 
-      <p role="status" aria-live="polite" className="sr-only">
+      <p className="mono mt-3 text-xs text-muted" aria-live="polite">
         {filtering ? `${filtered.length} of ${cases.length} cases shown.` : ''}
       </p>
 
@@ -140,15 +139,22 @@ export function Dashboard() {
                 >
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-8">
                     <div className="min-w-0 flex-1">
-                      <h2 className="text-[1.0625rem] font-medium leading-snug text-plum">
-                        <Link
-                          to={`/case/${item.caseId}`}
-                          onClick={(event) => event.stopPropagation()}
-                          className="rounded-sm transition-colors group-hover:text-violet-press"
-                        >
-                          {item.title}
-                        </Link>
-                      </h2>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="text-[1.0625rem] font-medium leading-snug text-plum">
+                          <Link
+                            to={`/case/${item.caseId}`}
+                            onClick={(event) => event.stopPropagation()}
+                            className="rounded-sm transition-colors group-hover:text-violet-press"
+                          >
+                            {item.title}
+                          </Link>
+                        </h2>
+                        {(item.isDemo || item.caseId === 'VT-DEMO-2026') && (
+                          <span className="mono inline-flex items-center rounded border border-amber-500/40 bg-amber-50 px-2 py-0.5 text-[0.625rem] font-bold uppercase tracking-wider text-amber-800">
+                            Simulated Demo Data
+                          </span>
+                        )}
+                      </div>
                       {item.summary ? (
                         <p className="mt-1.5 max-w-2xl text-[0.8125rem] leading-relaxed text-muted">
                           {item.summary}
@@ -168,23 +174,42 @@ export function Dashboard() {
                     </div>
                   </div>
 
-                  {/* Quick actions, revealed on hover and always reachable by keyboard. */}
-                  <div className="mt-4 flex flex-wrap gap-2 transition-opacity duration-200 sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover:opacity-100">
+                  {/* Direct access to workflow steps */}
+                  <div className="mt-4 flex flex-wrap items-center gap-2 pt-3 border-t border-lilac/40">
+                    <Button
+                      to={`/case/${item.caseId}`}
+                      variant="primary"
+                      size="sm"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      Open Case
+                    </Button>
                     <Button
                       to={`/case/${item.caseId}/evidence`}
                       variant="secondary"
                       size="sm"
                       onClick={(event) => event.stopPropagation()}
                     >
-                      Evidence
+                      Add Evidence ({count})
                     </Button>
                     <Button
-                      to={`/case/${item.caseId}/dossier`}
-                      variant="ghost"
+                      to={`/case/${item.caseId}/analysis`}
+                      variant="secondary"
                       size="sm"
                       onClick={(event) => event.stopPropagation()}
                     >
-                      Dossier
+                      <Activity aria-hidden="true" strokeWidth={1.5} className="size-3.5" />
+                      Analyse Patterns
+                    </Button>
+                    <Button
+                      to={`/case/${item.caseId}/dossier`}
+                      variant="outline"
+                      size="sm"
+                      className="border-lilac text-plum hover:border-violet"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <FileDown aria-hidden="true" strokeWidth={1.5} className="size-3.5" />
+                      Generate Evidence Dossier
                     </Button>
                   </div>
                 </div>
@@ -231,3 +256,5 @@ export function Dashboard() {
     </div>
   );
 }
+
+export default Dashboard;

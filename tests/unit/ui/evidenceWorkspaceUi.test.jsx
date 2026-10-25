@@ -95,5 +95,12 @@ describe('Evidence & Timeline UI Integration', () => {
     expect(html).toContain('Integrity');
     expect(html).toContain('recorded-threat.png');
     expect(html).toContain('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+
+    // Person 3 additions
+    expect(html).toContain('Download PDF');
+    expect(html).toContain('Download evidence ZIP');
+    expect(html).toContain('Bharatiya Sakshya Adhiniyam, 2023');
+    expect(html).toContain('cybercrime.gov.in');
+    expect(html).toContain('1930');
   });
 });

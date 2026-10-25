@@ -42,3 +42,5 @@ export function Logo({ to = '/', className, size = 'md' }) {
     </Link>
   );
 }
+
+export default Logo;

@@ -105,7 +105,7 @@ export function Dropzone({ onSealed, disabled = false, className }) {
             sha256,
             // Nothing has been re-checked yet — saying otherwise would be a lie.
             verificationStatus: 'UNVERIFIED',
-          });
+          }, file);
         } catch (error) {
           clearTimeout(indicatorTimer);
           patch(id, { status: 'error', showIndicator: false, error: error.message || 'Hashing failed.' });

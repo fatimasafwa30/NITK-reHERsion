@@ -19,16 +19,46 @@ const CONFIDENCE = [
   },
 ];
 
-export function AddEventDialog({ open, onOpenChange, caseId, evidence = [] }) {
-  const { addEvent } = useVera();
-  const toast = useToast();
+export function AddEventDialog({
+  open,
+  onOpenChange,
+  onClose,
+  onSubmit,
+  caseId,
+  evidence = [],
+  evidenceOptions = [],
+}) {
+  const vera = (() => {
+    try {
+      return useVera();
+    } catch {
+      return null;
+    }
+  })();
+  const toast = (() => {
+    try {
+      return useToast();
+    } catch {
+      return () => {};
+    }
+  })();
 
   const [label, setLabel] = useState('');
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
   const [confidence, setConfidence] = useState('confirmed');
   const [relatedEvidenceId, setRelatedEvidenceId] = useState('');
+  const [platform, setPlatform] = useState('');
+  const [senderHandle, setSenderHandle] = useState('');
+  const [blockedPrior, setBlockedPrior] = useState(false);
   const [errors, setErrors] = useState({});
+
+  const effectiveEvidence = evidence.length ? evidence : evidenceOptions;
+
+  const handleClose = () => {
+    onOpenChange?.(false);
+    onClose?.();
+  };
 
   useEffect(() => {
     if (open) {
@@ -37,6 +67,9 @@ export function AddEventDialog({ open, onOpenChange, caseId, evidence = [] }) {
       setTime('');
       setConfidence('confirmed');
       setRelatedEvidenceId('');
+      setPlatform('');
+      setSenderHandle('');
+      setBlockedPrior(false);
       setErrors({});
     }
   }, [open]);
@@ -52,8 +85,29 @@ export function AddEventDialog({ open, onOpenChange, caseId, evidence = [] }) {
     // A date with no time is stored at midnight; no time is invented.
     const occurredAt = date ? new Date(`${date}T${time || '00:00'}`).toISOString() : null;
 
-    addEvent(caseId, { label, occurredAt, timeConfidence: confidence, relatedEvidenceId });
-    onOpenChange(false);
+    if (onSubmit) {
+      onSubmit({
+        label: label.trim(),
+        occurredAt,
+        timeConfidence: confidence,
+        relatedEvidenceId: relatedEvidenceId || null,
+        platform: platform || undefined,
+        senderHandle: senderHandle.trim() || undefined,
+        blockedPrior: Boolean(blockedPrior),
+      });
+    } else if (vera?.addEvent && caseId) {
+      vera.addEvent(caseId, {
+        label,
+        occurredAt,
+        timeConfidence: confidence,
+        relatedEvidenceId,
+        platform: platform || undefined,
+        senderHandle: senderHandle.trim() || undefined,
+        blockedPrior: Boolean(blockedPrior),
+      });
+    }
+
+    handleClose();
     toast('Event added to the timeline', {
       detail: occurredAt ? undefined : 'Recorded without a date, marked uncertain.',
     });
@@ -62,13 +116,16 @@ export function AddEventDialog({ open, onOpenChange, caseId, evidence = [] }) {
   return (
     <Dialog
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={(val) => {
+        if (!val) handleClose();
+        else onOpenChange?.(val);
+      }}
       title="Add a timeline event"
       description="Events can be added at any time. An uncertain date is better than no record."
       footer={
         <>
           <DialogClose asChild>
-            <Button variant="secondary">Cancel</Button>
+            <Button variant="secondary" onClick={handleClose}>Cancel</Button>
           </DialogClose>
           <Button variant="primary" type="submit" form="add-event-form">
             Add event
@@ -156,20 +213,72 @@ export function AddEventDialog({ open, onOpenChange, caseId, evidence = [] }) {
             id="related-evidence"
             value={relatedEvidenceId}
             onChange={(event) => setRelatedEvidenceId(event.target.value)}
-            disabled={!evidence.length}
+            disabled={!effectiveEvidence.length}
           >
             <option value="">No related file</option>
-            {evidence.map((record) => (
+            {effectiveEvidence.map((record) => (
               <option key={record.evidenceId} value={record.evidenceId}>
                 {record.fileName}
               </option>
             ))}
           </Select>
-          {!evidence.length ? (
+          {!effectiveEvidence.length ? (
             <p className="mt-1.5 text-xs text-muted">This case has no sealed files yet.</p>
           ) : null}
         </div>
+
+        <div className="grid gap-4 sm:grid-cols-2 pt-1 border-t border-lilac/50">
+          <div>
+            <Label htmlFor="event-platform" hint="Optional">
+              Platform / Source
+            </Label>
+            <Select
+              id="event-platform"
+              value={platform}
+              onChange={(event) => setPlatform(event.target.value)}
+            >
+              <option value="">Auto-detect from text</option>
+              <option value="WhatsApp">WhatsApp</option>
+              <option value="Instagram">Instagram</option>
+              <option value="Email">Email</option>
+              <option value="Facebook">Facebook</option>
+              <option value="Telegram">Telegram</option>
+              <option value="Phone Call">Phone / Voicemail</option>
+              <option value="SMS">SMS / Text</option>
+              <option value="Other">Other</option>
+            </Select>
+          </div>
+
+          <Field label="Sender handle or phone" hint="Optional">
+            {(props) => (
+              <Input
+                {...props}
+                type="text"
+                value={senderHandle}
+                onChange={(event) => setSenderHandle(event.target.value)}
+                placeholder="e.g. @anonymous or +91 98..."
+              />
+            )}
+          </Field>
+        </div>
+
+        <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-lilac/70 bg-wash/40 p-3 text-xs text-plum hover:bg-wash/70">
+          <input
+            type="checkbox"
+            checked={blockedPrior}
+            onChange={(e) => setBlockedPrior(e.target.checked)}
+            className="mt-0.5 size-4 shrink-0 rounded accent-[var(--color-violet-deep)]"
+          />
+          <span>
+            <strong className="block font-medium">Contact resumed after block</strong>
+            <span className="text-muted text-[0.6875rem]">
+              Check this if this contact occurred after you had previously blocked the sender or explicitly requested no contact.
+            </span>
+          </span>
+        </label>
       </form>
     </Dialog>
   );
 }
+
+export default AddEventDialog;

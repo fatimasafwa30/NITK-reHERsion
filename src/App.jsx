@@ -10,6 +10,7 @@ import { Landing } from './pages/Landing';
 import { Dashboard } from './pages/Dashboard';
 import { CaseOverview } from './pages/CaseOverview';
 import { EvidenceStudio } from './pages/EvidenceStudio';
+import { CrossPlatformAnalysis } from './pages/CrossPlatformAnalysis';
 import { Verifier } from './pages/Verifier';
 import { Dossier } from './pages/Dossier';
 import { NotFound } from './pages/NotFound';
@@ -27,6 +28,7 @@ function Shell() {
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="case/:caseId" element={<CaseOverview />} />
         <Route path="case/:caseId/evidence" element={<EvidenceStudio />} />
+        <Route path="case/:caseId/analysis" element={<CrossPlatformAnalysis />} />
         <Route path="case/:caseId/dossier" element={<Dossier />} />
         <Route path="verify" element={<Verifier />} />
         <Route path="*" element={<NotFound />} />
@@ -52,3 +54,5 @@ export function App() {
     </MotionConfig>
   );
 }
+
+export default App;

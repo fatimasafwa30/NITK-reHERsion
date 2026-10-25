@@ -188,7 +188,8 @@ export default function EvidenceWorkspace({ onAddEvidence }) {
       <p className={styles.disclaimer}>
         <Info aria-hidden="true" strokeWidth={2} />
         A matching hash shows a file hasn't changed since it was added here. It doesn't prove who
-        created the file or when the incident happened.
+        created the file or when the incident happened. Case records and SHA-256 hashes persist on this device;
+        original raw files remain available for ZIP archive export during your active session.
       </p>
 
       {/* Upload failure / validation error alert */}

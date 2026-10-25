@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { FilePlus, FolderClosed, ShieldQuestionMark } from 'lucide-react';
+import { Activity, FileDown, FilePlus, FileText, FolderClosed, Layers, ShieldQuestionMark } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { PageTransition } from '../motion/PageTransition';
 import { RouteChrome } from '../motion/RouteChrome';
@@ -11,20 +11,24 @@ import { Footer } from './Footer';
 import { QuickExitButton } from './QuickExit';
 import { NewCaseDialog } from './NewCaseDialog';
 
-const NAV = [
+const BASE_NAV = [
   { to: '/dashboard', label: 'Cases', icon: FolderClosed },
   { to: '/verify', label: 'Verify', icon: ShieldQuestionMark },
 ];
 
 /**
  * App shell: a slim top bar on desktop, a bottom tab bar on mobile.
- * No sidebar — the content is a document, and documents want width.
+ * Contextual case navigation appears whenever inside a specific case route.
  */
 export function AppShell() {
   const location = useLocation();
   const [newCaseOpen, setNewCaseOpen] = useState(false);
   // The dossier is a document; it fades in without moving.
   const fadeOnly = location.pathname.endsWith('/dossier');
+
+  // Detect active case from URL path: /case/:caseId/*
+  const caseMatch = location.pathname.match(/\/case\/([^/]+)/);
+  const activeCaseId = caseMatch ? caseMatch[1] : null;
 
   return (
     <div className="flex min-h-dvh flex-col bg-ivory">
@@ -39,14 +43,90 @@ export function AppShell() {
         className="sticky top-0 z-40 border-b border-lilac bg-ivory/92 backdrop-blur-sm"
         data-print="hide"
       >
-        <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-6 px-5 sm:px-8">
+        <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-4 px-5 sm:px-8">
           <Logo />
 
           <nav aria-label="Main" className="hidden flex-1 items-center gap-1 sm:flex">
-            {NAV.map((item) => (
+            <NavLink
+              to="/dashboard"
+              className={({ isActive }) =>
+                cn(
+                  'relative inline-flex min-h-11 items-center rounded-md px-3 text-sm transition-colors duration-150',
+                  isActive && !activeCaseId ? 'text-plum font-medium' : 'text-muted hover:bg-wash/70 hover:text-plum',
+                )
+              }
+            >
+              Cases
+            </NavLink>
+
+            {activeCaseId ? (
+              <div className="flex items-center gap-1.5 pl-3 border-l border-lilac/70 ml-1">
+                <span className="mono text-[0.6875rem] text-muted font-medium pr-1">
+                  {activeCaseId}
+                </span>
+
+                <NavLink
+                  to={`/case/${activeCaseId}`}
+                  end
+                  className={({ isActive }) =>
+                    cn(
+                      'inline-flex min-h-9 items-center rounded-md px-2.5 text-xs font-medium transition-colors',
+                      isActive
+                        ? 'bg-paper text-violet-deep border border-violet/30 shadow-xs font-semibold'
+                        : 'text-muted hover:text-plum hover:bg-wash/60',
+                    )
+                  }
+                >
+                  Overview
+                </NavLink>
+
+                <NavLink
+                  to={`/case/${activeCaseId}/evidence`}
+                  className={({ isActive }) =>
+                    cn(
+                      'inline-flex min-h-9 items-center rounded-md px-2.5 text-xs font-medium transition-colors',
+                      isActive
+                        ? 'bg-paper text-violet-deep border border-violet/30 shadow-xs font-semibold'
+                        : 'text-muted hover:text-plum hover:bg-wash/60',
+                    )
+                  }
+                >
+                  Evidence
+                </NavLink>
+
+                <NavLink
+                  to={`/case/${activeCaseId}/analysis`}
+                  className={({ isActive }) =>
+                    cn(
+                      'inline-flex min-h-9 items-center gap-1.5 rounded-md px-3 text-xs transition-colors',
+                      isActive
+                        ? 'bg-violet-deep text-white shadow-xs font-semibold'
+                        : 'text-violet-deep bg-wash/60 hover:bg-wash hover:text-plum font-medium border border-lilac/60',
+                    )
+                  }
+                >
+                  <Activity className="size-3.5" aria-hidden="true" />
+                  Pattern Analysis
+                </NavLink>
+
+                <NavLink
+                  to={`/case/${activeCaseId}/dossier`}
+                  className={({ isActive }) =>
+                    cn(
+                      'inline-flex min-h-9 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors',
+                      isActive
+                        ? 'bg-paper text-violet-deep border border-violet/30 shadow-xs font-semibold'
+                        : 'text-muted hover:text-plum hover:bg-wash/60',
+                    )
+                  }
+                >
+                  <FileDown className="size-3.5" aria-hidden="true" />
+                  Dossier
+                </NavLink>
+              </div>
+            ) : (
               <NavLink
-                key={item.to}
-                to={item.to}
+                to="/verify"
                 className={({ isActive }) =>
                   cn(
                     'relative inline-flex min-h-11 items-center rounded-md px-3 text-sm transition-colors duration-150',
@@ -56,7 +136,7 @@ export function AppShell() {
               >
                 {({ isActive }) => (
                   <>
-                    {item.label}
+                    Verify
                     {isActive ? (
                       <motion.span
                         layoutId="vt-nav-underline"
@@ -68,7 +148,7 @@ export function AppShell() {
                   </>
                 )}
               </NavLink>
-            ))}
+            )}
           </nav>
 
           <div className="ml-auto flex items-center gap-2 sm:ml-0">
@@ -97,53 +177,117 @@ export function AppShell() {
 
       {/* Mobile tab bar */}
       <nav
-        aria-label="Main"
+        aria-label="Mobile Navigation"
         className="fixed inset-x-0 bottom-0 z-40 border-t border-lilac bg-ivory/96 backdrop-blur-sm sm:hidden"
         data-print="hide"
       >
         <ul className="mx-auto flex max-w-md">
-          {NAV.map((item) => (
-            <li key={item.to} className="flex-1">
-              <NavLink
-                to={item.to}
-                className={({ isActive }) =>
-                  cn(
-                    'relative flex min-h-14 flex-col items-center justify-center gap-1 pb-1 pt-2 text-[0.6875rem] font-medium transition-colors duration-[var(--dur-fast)]',
-                    isActive ? 'text-violet-deep' : 'text-muted',
-                  )
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    {isActive ? (
-                      <motion.span
-                        layoutId="vt-tabbar-indicator"
-                        aria-hidden="true"
-                        className="absolute inset-x-5 top-0 h-[2px] rounded-full bg-violet-deep"
-                        transition={{ duration: 0.2, ease: EASE.out }}
-                      />
-                    ) : null}
-                    <item.icon
-                      aria-hidden="true"
-                      strokeWidth={isActive ? 1.75 : 1.5}
-                      className="size-[18px]"
-                    />
-                    {item.label}
-                  </>
-                )}
-              </NavLink>
-            </li>
-          ))}
           <li className="flex-1">
-            <button
-              type="button"
-              onClick={() => setNewCaseOpen(true)}
-              className="flex min-h-14 w-full flex-col items-center justify-center gap-1 pb-1 pt-2 text-[0.6875rem] font-medium text-muted"
+            <NavLink
+              to="/dashboard"
+              className={({ isActive }) =>
+                cn(
+                  'flex min-h-14 flex-col items-center justify-center gap-1 pb-1 pt-2 text-[0.6875rem] font-medium transition-colors',
+                  isActive && !activeCaseId ? 'text-violet-deep' : 'text-muted',
+                )
+              }
             >
-              <FilePlus aria-hidden="true" strokeWidth={1.5} className="size-[18px]" />
-              New case
-            </button>
+              <FolderClosed aria-hidden="true" className="size-[18px]" />
+              Cases
+            </NavLink>
           </li>
+
+          {activeCaseId ? (
+            <>
+              <li className="flex-1">
+                <NavLink
+                  to={`/case/${activeCaseId}`}
+                  end
+                  className={({ isActive }) =>
+                    cn(
+                      'flex min-h-14 flex-col items-center justify-center gap-1 pb-1 pt-2 text-[0.6875rem] font-medium transition-colors',
+                      isActive ? 'text-violet-deep font-semibold' : 'text-muted',
+                    )
+                  }
+                >
+                  <FileText aria-hidden="true" className="size-[18px]" />
+                  Overview
+                </NavLink>
+              </li>
+
+              <li className="flex-1">
+                <NavLink
+                  to={`/case/${activeCaseId}/evidence`}
+                  className={({ isActive }) =>
+                    cn(
+                      'flex min-h-14 flex-col items-center justify-center gap-1 pb-1 pt-2 text-[0.6875rem] font-medium transition-colors',
+                      isActive ? 'text-violet-deep font-semibold' : 'text-muted',
+                    )
+                  }
+                >
+                  <Layers aria-hidden="true" className="size-[18px]" />
+                  Evidence
+                </NavLink>
+              </li>
+
+              <li className="flex-1">
+                <NavLink
+                  to={`/case/${activeCaseId}/analysis`}
+                  className={({ isActive }) =>
+                    cn(
+                      'flex min-h-14 flex-col items-center justify-center gap-1 pb-1 pt-2 text-[0.6875rem] font-medium transition-colors',
+                      isActive ? 'text-violet-deep font-semibold' : 'text-violet-deep/80',
+                    )
+                  }
+                >
+                  <Activity aria-hidden="true" className="size-[18px]" />
+                  Analysis
+                </NavLink>
+              </li>
+
+              <li className="flex-1">
+                <NavLink
+                  to={`/case/${activeCaseId}/dossier`}
+                  className={({ isActive }) =>
+                    cn(
+                      'flex min-h-14 flex-col items-center justify-center gap-1 pb-1 pt-2 text-[0.6875rem] font-medium transition-colors',
+                      isActive ? 'text-violet-deep font-semibold' : 'text-muted',
+                    )
+                  }
+                >
+                  <FileDown aria-hidden="true" className="size-[18px]" />
+                  Dossier
+                </NavLink>
+              </li>
+            </>
+          ) : (
+            <>
+              <li className="flex-1">
+                <NavLink
+                  to="/verify"
+                  className={({ isActive }) =>
+                    cn(
+                      'flex min-h-14 flex-col items-center justify-center gap-1 pb-1 pt-2 text-[0.6875rem] font-medium transition-colors',
+                      isActive ? 'text-violet-deep' : 'text-muted',
+                    )
+                  }
+                >
+                  <ShieldQuestionMark aria-hidden="true" className="size-[18px]" />
+                  Verify
+                </NavLink>
+              </li>
+              <li className="flex-1">
+                <button
+                  type="button"
+                  onClick={() => setNewCaseOpen(true)}
+                  className="flex min-h-14 w-full flex-col items-center justify-center gap-1 pb-1 pt-2 text-[0.6875rem] font-medium text-muted"
+                >
+                  <FilePlus aria-hidden="true" strokeWidth={1.5} className="size-[18px]" />
+                  New case
+                </button>
+              </li>
+            </>
+          )}
         </ul>
       </nav>
 
@@ -151,3 +295,5 @@ export function AppShell() {
     </div>
   );
 }
+
+export default AppShell;

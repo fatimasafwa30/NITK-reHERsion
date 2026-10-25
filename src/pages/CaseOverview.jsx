@@ -1,21 +1,19 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ChevronRight, Clock3, FileSearch, Plus, ScrollText } from 'lucide-react';
+import { Activity, ArrowRight, ChevronRight, Clock3, FileDown, FileSearch, Plus, ScrollText } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { EmptyState } from '../components/ui/EmptyState';
 import { CaseStatusMark } from '../components/ui/StatusMark';
 import { EvidenceSheet } from '../components/EvidenceSheet';
 import { Timeline } from '../components/Timeline';
 import { AddEventDialog } from '../components/AddEventDialog';
+import { PatternAnalysis } from '../components/PatternAnalysis';
 import { useVera } from '../store/VeraStore';
 import { formatDate, relativeDay } from '../lib/format';
+import { isDemoCase } from '../data/demoCaseData';
 import { mockCases } from '../data/mockCases';
 import { getEvidenceForCase } from '../services/evidenceService';
-import {
-  getTimelineForCase,
-  addTimelineEventForCase,
-  subscribeTimeline,
-} from '../services/timelineService';
+import { getTimelineForCase } from '../services/timelineService';
 
 export function CaseOverview({ onAddEvidence, onAddTimelineEvent } = {}) {
   const { caseId } = useParams();
@@ -27,16 +25,6 @@ export function CaseOverview({ onAddEvidence, onAddTimelineEvent } = {}) {
     vera = null;
   }
 
-  const [, setTimelineTick] = useState(0);
-
-  // Subscribe to live timeline state updates
-  useEffect(() => {
-    if (!caseId) return undefined;
-    return subscribeTimeline(caseId, () => {
-      setTimelineTick((t) => t + 1);
-    });
-  }, [caseId]);
-
   const record =
     vera?.getCase(caseId) ||
     mockCases.find((c) => c.caseId === caseId) ||
@@ -44,7 +32,7 @@ export function CaseOverview({ onAddEvidence, onAddTimelineEvent } = {}) {
 
   const evidenceFromStore = vera?.getEvidence(caseId) || [];
   const serviceEvidence = caseId ? getEvidenceForCase(caseId) : [];
-  const evidence = serviceEvidence.length > 0 ? serviceEvidence : evidenceFromStore;
+  const evidence = evidenceFromStore.length > 0 ? evidenceFromStore : serviceEvidence;
 
   const timelineFromStore = vera?.getTimeline(caseId) || [];
   const serviceTimeline = caseId ? getTimelineForCase(caseId) : [];
@@ -74,7 +62,8 @@ export function CaseOverview({ onAddEvidence, onAddTimelineEvent } = {}) {
           action={<Button to="/dashboard" variant="primary">Back to your cases</Button>}
         >
           <p>
-            The case <span className="mono text-plum">{caseId}</span> is not in this browser.
+            The case <span className="mono text-plum">{caseId}</span> is not in this browser. If you reset the demo
+            data, cases you added earlier were discarded.
           </p>
         </EmptyState>
       </div>
@@ -97,19 +86,70 @@ export function CaseOverview({ onAddEvidence, onAddTimelineEvent } = {}) {
         </ol>
       </nav>
 
-      <header className="max-w-3xl">
-        <h1 className="display-lg text-plum">{record.title}</h1>
-        <div className="mono mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[0.6875rem] text-muted">
-          <span className="text-plum/80">{record.caseId}</span>
-          <span aria-hidden="true" className="text-lilac">·</span>
-          <span>opened {formatDate(record.createdAt)}</span>
-          <span aria-hidden="true" className="text-lilac">·</span>
-          <span>updated {relativeDay(record.updatedAt)}</span>
+      {(isDemoCase(caseId) || record.isDemo) && (
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/40 bg-amber-50/80 px-4 py-2.5 text-xs text-amber-900">
+          <div className="flex items-center gap-2">
+            <span className="mono font-bold uppercase tracking-wider text-amber-800">Simulated Demo Case</span>
+            <span className="text-amber-700/80">·</span>
+            <span>All entities, messages, accounts, and evidence in this case are fictional demonstration artifacts.</span>
+          </div>
+        </div>
+      )}
+
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between border-b border-lilac pb-6">
+        <div>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="display-lg text-plum">{record.title}</h1>
+            {(isDemoCase(caseId) || record.isDemo) && (
+              <span className="mono inline-flex items-center rounded border border-amber-500/40 bg-amber-50 px-2 py-0.5 text-[0.625rem] font-bold uppercase tracking-wider text-amber-800">
+                Simulated Demo Data
+              </span>
+            )}
+          </div>
+          <div className="mono mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[0.6875rem] text-muted">
+            <span className="text-plum/80">{record.caseId}</span>
+            <span aria-hidden="true" className="text-lilac">·</span>
+            <span>opened {formatDate(record.createdAt)}</span>
+            <span aria-hidden="true" className="text-lilac">·</span>
+            <span>updated {relativeDay(record.updatedAt)}</span>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button to={`/case/${record.caseId}/analysis`} variant="secondary" size="sm">
+            <Activity aria-hidden="true" strokeWidth={1.5} className="size-3.5" />
+            Analyse Patterns
+          </Button>
+          <Button to={`/case/${record.caseId}/dossier`} variant="primary" size="sm">
+            <FileDown aria-hidden="true" strokeWidth={1.5} className="size-3.5" />
+            Generate Evidence Dossier
+          </Button>
         </div>
       </header>
 
-      <div className="mt-10 grid gap-10 lg:grid-cols-12 lg:gap-12">
-        {/* Rail */}
+      {/* Workflow Navigation Banner */}
+      <div className="mt-6 flex flex-wrap items-center gap-2 rounded-lg border border-lilac/70 bg-wash/50 px-4 py-3 text-xs text-plum">
+        <span className="mono font-semibold uppercase tracking-wider text-muted mr-1">Journey:</span>
+        <span className="rounded border border-violet-deep/30 bg-paper px-2 py-0.5 font-semibold text-violet-deep shadow-xs">
+          1. Case Overview
+        </span>
+        <ArrowRight className="size-3 text-lilac shrink-0" aria-hidden="true" />
+        <Link to={`/case/${record.caseId}/evidence`} className="rounded px-2 py-0.5 text-muted hover:text-plum hover:bg-paper">
+          2. Add Evidence
+        </Link>
+        <ArrowRight className="size-3 text-lilac shrink-0" aria-hidden="true" />
+        <Link to={`/case/${record.caseId}/analysis`} className="rounded px-2 py-0.5 text-muted hover:text-plum hover:bg-paper">
+          3. Analyse Patterns
+        </Link>
+        <ArrowRight className="size-3 text-lilac shrink-0" aria-hidden="true" />
+        <Link to={`/case/${record.caseId}/dossier`} className="rounded px-2 py-0.5 text-muted hover:text-plum hover:bg-paper font-medium">
+          4. Export Dossier
+        </Link>
+      </div>
+
+      <div className="mt-8 grid gap-10 lg:grid-cols-12 lg:gap-12">
+        {/* Rail. On a phone the actions come first, because that is what a
+            person reaches for; on a desktop it sits beside the record. */}
         <aside className="order-first lg:order-last lg:col-span-4">
           <div className="lg:sticky lg:top-24">
             <div className="rounded-lg border border-lilac bg-paper p-5 shadow-sheet sm:p-6">
@@ -143,7 +183,7 @@ export function CaseOverview({ onAddEvidence, onAddTimelineEvent } = {}) {
                 </div>
               </dl>
 
-              <div className="mt-6 flex flex-col gap-2">
+              <div className="mt-6 flex flex-col gap-2.5">
                 <Button
                   to={`/case/${record.caseId}/evidence`}
                   variant="primary"
@@ -152,103 +192,153 @@ export function CaseOverview({ onAddEvidence, onAddTimelineEvent } = {}) {
                   <Plus aria-hidden="true" strokeWidth={1.5} className="size-4" />
                   Add evidence
                 </Button>
-                <Link
-                  to={`/case/${record.caseId}/evidence`}
-                  className="mt-1 inline-flex min-h-11 items-center text-[0.8125rem] text-violet-deep underline decoration-lilac decoration-1 underline-offset-4 hover:decoration-violet"
-                >
+                <Button to={`/case/${record.caseId}/evidence`} variant="outline" className="border-lilac text-plum">
                   Open evidence workspace
-                </Link>
-                <Button variant="secondary" onClick={() => setEventOpen(true)}>
+                </Button>
+                <Button to={`/case/${record.caseId}/analysis`} variant="secondary">
+                  <Activity aria-hidden="true" strokeWidth={1.5} className="size-4" />
+                  Cross-Platform Analysis
+                </Button>
+                <Button
+                  to={`/case/${record.caseId}/dossier`}
+                  variant="outline"
+                  className="border-violet-deep/50 bg-wash/60 text-violet-deep font-semibold hover:border-violet-deep hover:bg-wash"
+                >
+                  <FileDown aria-hidden="true" strokeWidth={1.5} className="size-4" />
+                  Generate Evidence Dossier
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setEventOpen(true);
+                    onAddTimelineEvent?.();
+                  }}
+                >
                   <Clock3 aria-hidden="true" strokeWidth={1.5} className="size-4" />
                   Add timeline event
                 </Button>
-                <Button to={`/case/${record.caseId}/dossier`} variant="ghost">
-                  <ScrollText aria-hidden="true" strokeWidth={1.5} className="size-4" />
-                  Export dossier
-                </Button>
               </div>
             </div>
 
-            {evidence.length ? (
-              <div className="mt-6">
-                <p className="eyebrow">Recently sealed</p>
-                <div className="mt-4 space-y-3">
-                  {evidence.slice(0, 2).map((item) => (
-                    <EvidenceSheet
-                      key={item.evidenceId}
-                      record={item}
-                      highlighted={activeEvidenceId === item.evidenceId}
-                    />
-                  ))}
-                </div>
-                {evidence.length > 2 ? (
-                  <Link
-                    to={`/case/${record.caseId}/evidence`}
-                    className="mt-4 inline-flex min-h-11 items-center text-[0.8125rem] text-violet-deep underline decoration-lilac decoration-1 underline-offset-4 hover:decoration-violet"
-                  >
-                    See all {evidence.length} files
-                  </Link>
-                ) : null}
+            {/* Evidence roll. */}
+            <div className="mt-6 rounded-lg border border-lilac bg-paper p-5 shadow-sheet sm:p-6">
+              <div className="flex items-baseline justify-between gap-3">
+                <p className="eyebrow">Sealed evidence</p>
+                <span className="mono text-xs text-muted">{evidence.length}</span>
               </div>
-            ) : null}
+              {evidence.length ? (
+                <ul className="mt-4 space-y-3">
+                  {evidence.map((item) => (
+                    <li key={item.evidenceId}>
+                      <EvidenceSheet record={item} />
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-4 text-[0.8125rem] text-muted">No files sealed yet.</p>
+              )}
+            </div>
           </div>
         </aside>
 
-        {/* The record itself */}
-        <section className="lg:col-span-8" aria-labelledby="timeline-heading">
-          <div className="flex items-end justify-between gap-4">
-            <div>
-              <h2 id="timeline-heading" className="display-md text-plum">
-                Timeline
-              </h2>
-              <p className="mt-1.5 text-[0.8125rem] text-muted">
-                In the order things happened, as far as is known.
-              </p>
+        {/* The record itself. */}
+        <section className="lg:col-span-8 space-y-10">
+          {/* Prominent Cross-Platform Feature Spotlight */}
+          <div className="rounded-lg border border-lilac bg-paper p-6 shadow-sheet">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between border-b border-lilac/70 pb-4">
+              <div>
+                <span className="mono text-[0.625rem] font-bold uppercase tracking-wider text-violet-deep">
+                  Core Analysis & Forensic Intelligence
+                </span>
+                <h2 className="font-serif text-xl font-semibold text-plum mt-1">
+                  Cross-Platform Harassment Pattern Analysis
+                </h2>
+                <p className="mt-1 text-xs text-muted max-w-xl">
+                  Automatically correlates multi-channel contact across WhatsApp, Instagram, Email, Calls, and SMS. Identifies shared handles, block bypasses, and escalation indicators.
+                </p>
+              </div>
+              <Button
+                to={`/case/${record.caseId}/analysis`}
+                variant="primary"
+                size="sm"
+                className="shrink-0"
+              >
+                <Activity aria-hidden="true" strokeWidth={1.5} className="size-3.5" />
+                View Full Analysis & Graph
+                <ArrowRight aria-hidden="true" strokeWidth={1.5} className="size-3.5" />
+              </Button>
             </div>
-            <Button variant="secondary" size="sm" onClick={() => setEventOpen(true)} className="shrink-0">
-              <Plus aria-hidden="true" strokeWidth={1.5} className="size-3.5" />
-              Add event
-            </Button>
+
+            {/* Embedded Pattern Analysis Summary */}
+            <div className="mt-5">
+              <PatternAnalysis caseRecord={record} evidence={evidence} timeline={events} />
+            </div>
           </div>
 
-          <hr className="rule mt-6" />
+          <div aria-labelledby="timeline-heading">
+            <div className="flex items-end justify-between gap-4">
+              <div>
+                <h2 id="timeline-heading" className="display-md text-plum">
+                  Timeline
+                </h2>
+                <p className="mt-1.5 text-[0.8125rem] text-muted">
+                  In the order things happened, as far as is known.
+                </p>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setEventOpen(true);
+                  onAddTimelineEvent?.();
+                }}
+                className="shrink-0"
+              >
+                <Plus aria-hidden="true" strokeWidth={1.5} className="size-3.5" />
+                Add event
+              </Button>
+            </div>
 
-          {events.length ? (
-            <Timeline
-              className="mt-8"
-              events={events}
-              evidenceById={evidenceById}
-              activeEvidenceId={activeEvidenceId}
-              onFocusEvidence={setActiveEvidenceId}
-            />
-          ) : (
-            <EmptyState
-              className="mt-8"
-              align="left"
-              icon={Clock3}
-              title="The timeline is empty"
-              action={
-                <Button variant="primary" onClick={() => setEventOpen(true)}>
-                  <Plus aria-hidden="true" strokeWidth={1.5} className="size-4" />
-                  Add the first event
-                </Button>
-              }
-            >
-              <p>
-                Start wherever you remember most clearly. You can add earlier events later, and mark any date you
-                are unsure of as uncertain.
-              </p>
-            </EmptyState>
-          )}
+            <hr className="rule mt-6" />
+
+            {events.length ? (
+              <Timeline
+                className="mt-8"
+                events={events}
+                evidenceById={evidenceById}
+                activeEvidenceId={activeEvidenceId}
+                onFocusEvidence={setActiveEvidenceId}
+              />
+            ) : (
+              <EmptyState
+                className="mt-8"
+                align="left"
+                icon={Clock3}
+                title="The timeline is empty"
+                action={
+                  <Button
+                    variant="primary"
+                    onClick={() => {
+                      setEventOpen(true);
+                      onAddTimelineEvent?.();
+                    }}
+                  >
+                    <Plus aria-hidden="true" strokeWidth={1.5} className="size-4" />
+                    Add the first event
+                  </Button>
+                }
+              >
+                <p>
+                  Start wherever you remember most clearly. You can add earlier events later, and mark any date you
+                  are unsure of as uncertain.
+                </p>
+              </EmptyState>
+            )}
+          </div>
         </section>
       </div>
 
-      <AddEventDialog
-        open={eventOpen}
-        onOpenChange={setEventOpen}
-        caseId={record.caseId}
-        evidence={evidence}
-      />
+      <AddEventDialog open={eventOpen} onOpenChange={setEventOpen} caseId={record.caseId} evidence={evidence} />
     </div>
   );
 }

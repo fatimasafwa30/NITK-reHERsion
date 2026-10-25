@@ -35,19 +35,27 @@ export function EvidenceSheet({
           changed ? 'bg-alert/55' : verified ? 'bg-violet-deep' : 'bg-lilac',
         )}
       />
-
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="mono text-[0.625rem] font-medium tracking-[0.14em] text-muted">{kind}</p>
-          <h3
-            className={cn(
-              'mt-1 truncate font-medium text-plum',
-              tone === 'specimen' ? 'text-[0.9375rem]' : 'text-sm',
-            )}
-            title={record.fileName}
-          >
-            {record.fileName}
-          </h3>
+        <div className="flex items-start gap-3 min-w-0">
+          {record.previewUrl && record.mimeType?.startsWith('image/') ? (
+            <img
+              src={record.previewUrl}
+              alt={record.fileName}
+              className="size-12 rounded object-cover border border-lilac/70 shrink-0 bg-wash/50"
+            />
+          ) : null}
+          <div className="min-w-0">
+            <p className="mono text-[0.625rem] font-medium tracking-[0.14em] text-muted">{kind}</p>
+            <h3
+              className={cn(
+                'mt-1 truncate font-medium text-plum',
+                tone === 'specimen' ? 'text-[0.9375rem]' : 'text-sm',
+              )}
+              title={record.fileName}
+            >
+              {record.fileName}
+            </h3>
+          </div>
         </div>
         <VerificationMark status={record.verificationStatus} drawIn={drawSeal} className="shrink-0 pt-1" />
       </div>

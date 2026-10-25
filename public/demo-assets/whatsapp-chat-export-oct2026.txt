@@ -1,0 +1,22 @@
+================================================================================
+VERATRACE FORENSIC EVIDENCE PRESERVATION — SIMULATED DEMO EXPORT
+================================================================================
+Case Identifier: VT-DEMO-2026
+Service: WhatsApp Direct Chat Export
+Participant A (Complainant): [Victim User — Redacted in Demo]
+Participant B (Sender): +91 98201 44892 (Associated with @karan_v_arch)
+Intake Timestamp: 2026-10-14T09:15:00.000Z
+Integrity Algorithm: SHA-256 (FIPS 180-4 standard)
+Simulated Data Notice: All accounts, phone numbers and timestamps are fictional.
+================================================================================
+
+[12/10/2026, 23:42:10 UTC] +91 98201 44892: You need to respond right now regarding the design assets and portfolio drafts.
+[12/10/2026, 23:45:18 UTC] +91 98201 44892: If you don't send over the files by tomorrow morning, I will email your team lead.
+[12/10/2026, 23:48:02 UTC] +91 98201 44892: You cannot avoid this conversation.
+[13/10/2026, 09:15:20 UTC] Victim: Please stop contacting me. This is unwanted and unacceptable harassment. Do not message me again.
+[13/10/2026, 09:16:04 UTC] +91 98201 44892: You think you have a choice here? Check your email later today.
+[14/10/2026, 08:30:00 UTC] [SYSTEM NOTE: User configured boundary and blocked +91 98201 44892 on WhatsApp]
+
+================================================================================
+END OF CHAT EXPORT STREAM — VERATRACE TAMPER-EVIDENT INTAKE
+================================================================================

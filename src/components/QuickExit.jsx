@@ -9,15 +9,18 @@ import { quickExit } from '../lib/quickExit';
  * Always present, at every width, and deliberately quieter than the primary
  * action — it is a safety control, not a call to action.
  */
-export function QuickExitButton({ className }) {
+export function QuickExitButton({ className, compact = false }) {
   return (
     <button
       type="button"
       onClick={quickExit}
+      aria-label="Quick exit this site. You can also press Escape at any time."
+      title="Press Escape at any time"
       className={cn(
         // Hover may transition; the action itself never does. Nothing here
         // delays the click, and the control is painted on the first frame.
         'inline-flex min-h-11 items-center gap-1.5 rounded-md border border-lilac bg-paper px-3 text-[0.8125rem] font-medium text-plum transition-colors duration-[var(--dur-fast)] hover:border-violet hover:bg-wash/60',
+        compact && 'px-2 min-h-9 text-xs',
         className,
       )}
     >
@@ -47,3 +50,5 @@ export function useGlobalQuickExit() {
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, []);
 }
+
+export default QuickExitButton;

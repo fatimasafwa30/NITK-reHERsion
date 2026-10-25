@@ -2,54 +2,32 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { CaseStatus, mockCases } from '../data/mockCases';
 import { VerificationStatus, mockEvidenceByCase } from '../data/mockEvidence';
 import { mockTimelineByCase } from '../data/mockTimeline';
-
-const STORAGE_KEY = 'veratrace.demo.v1';
+import {
+  getCasesSync,
+  createCase as storeCreateCase,
+  subscribeCases,
+} from '../services/caseStore';
+import {
+  getEvidenceForCase,
+  syncEvidenceRecord,
+  deleteEvidenceRecord,
+  updateEvidenceVerificationStatus,
+  subscribeEvidence,
+  recheckEvidenceIntegrity,
+  processEvidenceFile,
+} from '../services/evidenceService';
+import {
+  getTimelineForCase,
+  addTimelineEventForCase,
+  subscribeTimeline,
+} from '../services/timelineService';
+import {
+  DEMO_CASE_ID,
+  isDemoCase,
+  seedDemoCase,
+} from '../data/demoCaseData';
 
 const VeraStoreContext = createContext(null);
-
-function seed() {
-  // Demo only; replace with real services. Deep-copied so the mock modules
-  // stay pristine and "Reset demo data" can always return to this state.
-  return {
-    cases: mockCases.map((c) => ({ ...c })),
-    evidenceByCase: Object.fromEntries(
-      Object.entries(mockEvidenceByCase).map(([id, list]) => [id, list.map((e) => ({ ...e }))]),
-    ),
-    timelineByCase: Object.fromEntries(
-      Object.entries(mockTimelineByCase).map(([id, list]) => [id, list.map((e) => ({ ...e }))]),
-    ),
-  };
-}
-
-/** Demo only; replace with real services. Reads persisted demo state. */
-function load() {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return seed();
-    const parsed = JSON.parse(raw);
-    if (!parsed || !Array.isArray(parsed.cases)) return seed();
-    return {
-      cases: parsed.cases,
-      evidenceByCase: parsed.evidenceByCase || {},
-      timelineByCase: parsed.timelineByCase || {},
-    };
-  } catch {
-    return seed();
-  }
-}
-
-/** Demo only; replace with real services. Writes persisted demo state. */
-function save(state) {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch {
-    /* private mode or a full quota — the demo still works in memory */
-  }
-}
-
-function newId(prefix) {
-  return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-}
 
 /** Events are ordered chronologically; undated ones sit at the end. */
 function sortEvents(events) {
@@ -57,143 +35,129 @@ function sortEvents(events) {
     if (!a.occurredAt && !b.occurredAt) return 0;
     if (!a.occurredAt) return 1;
     if (!b.occurredAt) return -1;
-    return new Date(a.occurredAt) - new Date(b.occurredAt);
+    return new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
   });
 }
 
-export function VeraStoreProvider({ children }) {
-  const [state, setState] = useState(load);
-
-  useEffect(() => {
-    save(state);
-  }, [state]);
-
-  /** Demo only; replace with real services. Keeps counts and timestamps honest. */
-  const touchCase = useCallback((draft, caseId) => {
-    const evidence = draft.evidenceByCase[caseId] || [];
-    draft.cases = draft.cases.map((c) =>
-      c.caseId === caseId
-        ? { ...c, evidenceCount: evidence.length, updatedAt: new Date().toISOString() }
-        : c,
-    );
-    return draft;
-  }, []);
-
-  /** Demo only; replace with real services. Creates a case and returns its id. */
-  const createCase = useCallback((input) => {
-    const caseId = newId('case');
-    const now = new Date().toISOString();
-    const record = {
-      caseId,
-      title: input.title.trim(),
-      status: input.status || CaseStatus.OPEN,
-      createdAt: now,
-      updatedAt: now,
-      evidenceCount: 0,
-      summary: (input.summary || '').trim(),
+function loadFromServices() {
+  try {
+    const cases = getCasesSync();
+    const evidenceByCase = {};
+    const timelineByCase = {};
+    for (const c of cases) {
+      evidenceByCase[c.caseId] = getEvidenceForCase(c.caseId);
+      timelineByCase[c.caseId] = sortEvents(getTimelineForCase(c.caseId));
+    }
+    return { cases, evidenceByCase, timelineByCase };
+  } catch {
+    return {
+      cases: mockCases.map((c) => ({ ...c })),
+      evidenceByCase: Object.fromEntries(
+        Object.entries(mockEvidenceByCase).map(([id, list]) => [id, list.map((e) => ({ ...e }))]),
+      ),
+      timelineByCase: Object.fromEntries(
+        Object.entries(mockTimelineByCase).map(([id, list]) => [id, list.map((e) => ({ ...e }))]),
+      ),
     };
-    setState((prev) => ({
-      ...prev,
-      cases: [record, ...prev.cases],
-      evidenceByCase: { ...prev.evidenceByCase, [caseId]: [] },
-      timelineByCase: { ...prev.timelineByCase, [caseId]: [] },
-    }));
-    return caseId;
+  }
+}
+
+export function VeraStoreProvider({ children }) {
+  const [state, setState] = useState(loadFromServices);
+
+  // Subscribe to live mutations from all services
+  useEffect(() => {
+    const unsubCases = subscribeCases(() => {
+      setState(loadFromServices());
+    });
+    const unsubEvidence = subscribeEvidence('*', () => {
+      setState(loadFromServices());
+    });
+    const unsubTimeline = subscribeTimeline('*', () => {
+      setState(loadFromServices());
+    });
+    return () => {
+      unsubCases();
+      unsubEvidence();
+      unsubTimeline();
+    };
   }, []);
 
-  /** Demo only; replace with real services. Appends a sealed evidence record. */
+  const createCase = useCallback(async (input) => {
+    const created = await storeCreateCase({
+      title: input.title.trim(),
+      summary: (input.summary || '').trim(),
+      status: input.status || CaseStatus.OPEN,
+    });
+    setState(loadFromServices());
+    return created.caseId;
+  }, []);
+
   const addEvidence = useCallback(
-    (caseId, record) => {
-      setState((prev) => {
-        const draft = {
-          ...prev,
-          evidenceByCase: {
-            ...prev.evidenceByCase,
-            [caseId]: [record, ...(prev.evidenceByCase[caseId] || [])],
-          },
-        };
-        return touchCase(draft, caseId);
-      });
+    async (caseId, record, file) => {
+      if (file) {
+        await processEvidenceFile(caseId, file);
+      } else {
+        syncEvidenceRecord(caseId, record);
+      }
+      setState(loadFromServices());
     },
-    [touchCase],
+    [],
   );
 
-  /** Demo only; replace with real services. Removes a record and its timeline links. */
   const removeEvidence = useCallback(
     (caseId, evidenceId) => {
-      setState((prev) => {
-        const draft = {
-          ...prev,
-          evidenceByCase: {
-            ...prev.evidenceByCase,
-            [caseId]: (prev.evidenceByCase[caseId] || []).filter((e) => e.evidenceId !== evidenceId),
-          },
-          timelineByCase: {
-            ...prev.timelineByCase,
-            [caseId]: (prev.timelineByCase[caseId] || []).map((e) =>
-              e.relatedEvidenceId === evidenceId ? { ...e, relatedEvidenceId: null } : e,
-            ),
-          },
-        };
-        return touchCase(draft, caseId);
-      });
+      deleteEvidenceRecord(caseId, evidenceId);
+      setState(loadFromServices());
     },
-    [touchCase],
+    [],
   );
 
-  /** Demo only; replace with real services. Records the outcome of a re-check. */
   const setVerificationStatus = useCallback(
     (caseId, evidenceId, status) => {
-      setState((prev) => {
-        const draft = {
-          ...prev,
-          evidenceByCase: {
-            ...prev.evidenceByCase,
-            [caseId]: (prev.evidenceByCase[caseId] || []).map((e) =>
-              e.evidenceId === evidenceId ? { ...e, verificationStatus: status } : e,
-            ),
-          },
-        };
-        return touchCase(draft, caseId);
-      });
+      updateEvidenceVerificationStatus(evidenceId, status);
+      setState(loadFromServices());
     },
-    [touchCase],
+    [],
   );
 
-  /** Demo only; replace with real services. Adds a timeline event in order. */
   const addEvent = useCallback(
     (caseId, input) => {
-      const event = {
-        eventId: newId('tl'),
+      const event = addTimelineEventForCase(caseId, {
+        caseId,
         occurredAt: input.occurredAt || null,
         timeConfidence: input.timeConfidence === 'uncertain' ? 'uncertain' : 'confirmed',
         label: input.label.trim(),
         relatedEvidenceId: input.relatedEvidenceId || null,
-      };
-      setState((prev) => {
-        const draft = {
-          ...prev,
-          timelineByCase: {
-            ...prev.timelineByCase,
-            [caseId]: sortEvents([...(prev.timelineByCase[caseId] || []), event]),
-          },
-        };
-        return touchCase(draft, caseId);
+        platform: input.platform || undefined,
+        senderHandle: input.senderHandle || undefined,
+        blockedPrior: Boolean(input.blockedPrior),
       });
+      setState(loadFromServices());
       return event;
     },
-    [touchCase],
+    [],
   );
 
-  /** Demo only; replace with real services. Returns the demo to its seeded state. */
+  // Ensure demo case is seeded on mount
+  useEffect(() => {
+    seedDemoCase();
+  }, []);
+
+  const loadDemoCase = useCallback(() => {
+    const id = seedDemoCase({ overwrite: true });
+    setState(loadFromServices());
+    return id;
+  }, []);
+
   const resetDemo = useCallback(() => {
-    const fresh = seed();
-    setState(fresh);
     try {
-      window.localStorage.removeItem(STORAGE_KEY);
-    } catch {
-      /* nothing to clean up */
-    }
+      window.localStorage.removeItem('veratrace_cases_v1');
+      window.localStorage.removeItem('veratrace_evidence_records_v1');
+      window.localStorage.removeItem('veratrace_timeline_events_v1');
+    } catch {}
+    seedDemoCase();
+    setState(loadFromServices());
   }, []);
 
   const value = useMemo(
@@ -202,39 +166,58 @@ export function VeraStoreProvider({ children }) {
       evidenceByCase: state.evidenceByCase,
       timelineByCase: state.timelineByCase,
       getCase: (caseId) => state.cases.find((c) => c.caseId === caseId) || null,
-      getEvidence: (caseId) => state.evidenceByCase[caseId] || [],
-      getTimeline: (caseId) => sortEvents(state.timelineByCase[caseId] || []),
+      getEvidence: (caseId) => getEvidenceForCase(caseId),
+      getTimeline: (caseId) => sortEvents(getTimelineForCase(caseId)),
       createCase,
       addEvidence,
       removeEvidence,
       setVerificationStatus,
       addEvent,
       resetDemo,
+      loadDemoCase,
     }),
-    [state, createCase, addEvidence, removeEvidence, setVerificationStatus, addEvent, resetDemo],
+    [state, createCase, addEvidence, removeEvidence, setVerificationStatus, addEvent, resetDemo, loadDemoCase],
   );
 
   return <VeraStoreContext.Provider value={value}>{children}</VeraStoreContext.Provider>;
 }
 
-const defaultVeraContext = {
-  cases: [],
-  evidenceByCase: {},
-  timelineByCase: {},
-  getCase: () => null,
-  getEvidence: () => [],
-  getTimeline: () => [],
-  createCase: () => {},
-  addEvidence: () => {},
-  removeEvidence: () => {},
-  setVerificationStatus: () => {},
-  addEvent: () => {},
-  resetDemo: () => {},
-};
-
 export function useVera() {
   const ctx = useContext(VeraStoreContext);
-  return ctx || defaultVeraContext;
+  if (!ctx) {
+    const fallback = loadFromServices();
+    return {
+      cases: fallback.cases,
+      evidenceByCase: fallback.evidenceByCase,
+      timelineByCase: fallback.timelineByCase,
+      getCase: (caseId) =>
+        fallback.cases.find((c) => c.caseId === caseId) || {
+          caseId,
+          title: 'Case ' + caseId,
+          summary: '',
+          status: CaseStatus.OPEN,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      getEvidence: (caseId) => getEvidenceForCase(caseId),
+      getTimeline: (caseId) => sortEvents(getTimelineForCase(caseId)),
+      createCase: async (input) => storeCreateCase(input),
+      addEvidence: (caseId, record) => syncEvidenceRecord(caseId, record),
+      removeEvidence: () => {},
+      setVerificationStatus: (caseId, evidenceId, status) => updateEvidenceVerificationStatus(evidenceId, status),
+      addEvent: (caseId, input) =>
+        addTimelineEventForCase(caseId, {
+          caseId,
+          occurredAt: input.occurredAt || null,
+          timeConfidence: input.timeConfidence === 'uncertain' ? 'uncertain' : 'confirmed',
+          label: input.label,
+          relatedEvidenceId: input.relatedEvidenceId || null,
+        }),
+      resetDemo: () => {},
+      loadDemoCase: () => seedDemoCase(),
+    };
+  }
+  return ctx;
 }
 
 export { CaseStatus, VerificationStatus };

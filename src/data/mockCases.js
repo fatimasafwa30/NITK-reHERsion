@@ -13,6 +13,17 @@ export const CaseStatus = Object.freeze({
 
 export const mockCases = [
   {
+    caseId: 'VT-DEMO-2026',
+    title: 'Case VT-DEMO-2026 — Cross-Platform Harassment Investigation',
+    status: CaseStatus.IN_PROGRESS,
+    createdAt: '2026-10-12T10:00:00.000Z',
+    updatedAt: '2026-10-19T18:30:00.000Z',
+    evidenceCount: 5,
+    summary:
+      'SIMULATED DEMO DATA: Coercive multi-channel contact and boundary violations across WhatsApp, Instagram, Email, and SMS following an explicit block request.',
+    isDemo: true,
+  },
+  {
     caseId: 'case_1001',
     title: 'Workplace harassment — messages & emails',
     status: CaseStatus.IN_PROGRESS,
