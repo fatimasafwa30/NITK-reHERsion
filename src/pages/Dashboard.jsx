@@ -1,104 +1,232 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Plus, Search, FolderClosed, FileCheck2, Clock3, ChevronRight } from 'lucide-react';
-import Button from '../components/Button';
-import StatCard from '../components/StatCard';
-import StatusChip from '../components/StatusChip';
-import EmptyState from '../components/EmptyState';
-import { useCases } from '../hooks/useCases';
-import styles from './Dashboard.module.css';
+import { useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { motion, useReducedMotion } from 'motion/react';
+import { FolderClosed, Plus, Search, SlidersHorizontal } from 'lucide-react';
+import { Button } from '../components/ui/Button';
+import { Input, Select } from '../components/ui/Field';
+import { EmptyState } from '../components/ui/EmptyState';
+import { CaseStatusMark } from '../components/ui/StatusMark';
+import { NewCaseDialog } from '../components/NewCaseDialog';
+import { useVera } from '../store/VeraStore';
+import { formatDate, relativeDay } from '../lib/format';
 
-function relativeDate(iso) {
-  return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-}
+export function Dashboard() {
+  const { cases, evidenceByCase } = useVera();
+  const navigate = useNavigate();
+  const reduced = useReducedMotion();
 
-/**
- * @param {{ onNewCase?: () => void }} props
- * Person 3: pass `onNewCase` to open your case-creation flow. With no
- * handler the button keeps its current placeholder behaviour (no-op), so
- * you can wire this from a parent without editing this file.
- */
-export default function Dashboard({ onNewCase }) {
   const [query, setQuery] = useState('');
-  const { data: cases } = useCases();
+  const [status, setStatus] = useState('ALL');
+  const [newCaseOpen, setNewCaseOpen] = useState(false);
 
-  const filtered = cases.filter((c) =>
-    c.title.toLowerCase().includes(query.trim().toLowerCase())
-  );
-  const totalEvidence = cases.reduce((sum, c) => sum + c.evidenceCount, 0);
-  const activeCount = cases.filter((c) => c.status !== 'CLOSED').length;
+  const stats = useMemo(() => {
+    const files = Object.values(evidenceByCase).reduce((total, list) => total + list.length, 0);
+    const latest = cases.reduce((acc, item) => (!acc || item.updatedAt > acc ? item.updatedAt : acc), null);
+    return { cases: cases.length, files, latest };
+  }, [cases, evidenceByCase]);
+
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return cases
+      .filter((item) => (status === 'ALL' ? true : item.status === status))
+      .filter((item) =>
+        needle
+          ? `${item.title} ${item.summary}`.toLowerCase().includes(needle)
+          : true,
+      )
+      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  }, [cases, query, status]);
+
+  const filtering = Boolean(query.trim()) || status !== 'ALL';
 
   return (
-    <div className={styles.wrap}>
-      <header className={styles.header}>
-        <div>
-          <h1 className={styles.title}>My cases</h1>
-          <p className={styles.subtitle}>Everything here stays private to you.</p>
+    <div className="mx-auto w-full max-w-6xl px-5 py-12 sm:px-8 sm:py-16">
+      <header>
+        <p className="eyebrow">Your cases</p>
+        <div className="mt-4 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+          <h1 className="display-lg max-w-[24ch] text-plum">
+            Everything you have put <em className="italic">on the record</em>.
+          </h1>
+          <Button variant="primary" onClick={() => setNewCaseOpen(true)} className="shrink-0 max-sm:w-full">
+            <Plus aria-hidden="true" strokeWidth={1.5} className="size-4" />
+            New case
+          </Button>
         </div>
-        {/* Case creation is Person 3's scope — presentational until onNewCase is supplied. */}
-        <Button iconLeft={<Plus />} onClick={onNewCase}>New case</Button>
       </header>
 
-      <section className={styles.stats} aria-label="Summary">
-        <StatCard label="Active cases" value={activeCount} icon={<FolderClosed />} tone="accent" hint="Still being added to" />
-        <StatCard label="Evidence items" value={totalEvidence} icon={<FileCheck2 />} hint="Across all cases" />
-        <StatCard label="Last activity" value="20 Oct" icon={<Clock3 />} hint="Workplace harassment" />
-      </section>
+      {/* One quiet line of figures, set like a caption rather than a dashboard. */}
+      <dl className="mono mt-10 flex flex-wrap items-baseline gap-x-3 gap-y-2 text-[0.8125rem] text-muted">
+        <div className="flex items-baseline gap-2">
+          <dt className="sr-only">Cases</dt>
+          <dd className="text-plum">{stats.cases}</dd>
+          <span>{stats.cases === 1 ? 'case' : 'cases'}</span>
+        </div>
+        <span aria-hidden="true" className="text-lilac">
+          /
+        </span>
+        <div className="flex items-baseline gap-2">
+          <dt className="sr-only">Sealed files</dt>
+          <dd className="text-plum">{stats.files}</dd>
+          <span>sealed {stats.files === 1 ? 'file' : 'files'}</span>
+        </div>
+        <span aria-hidden="true" className="text-lilac">
+          /
+        </span>
+        <div className="flex items-baseline gap-2">
+          <dt className="sr-only">Last activity</dt>
+          <dd className="text-plum">{stats.latest ? relativeDay(stats.latest) : '—'}</dd>
+          <span>last activity</span>
+        </div>
+      </dl>
 
-      <div className={styles.toolbar}>
-        <div className={styles.searchWrap}>
-          <Search className={styles.searchIcon} aria-hidden="true" strokeWidth={2} />
-          <label className="visually-hidden" htmlFor="case-search">Search cases</label>
-          <input
-            id="case-search"
+      <hr className="rule mt-8" />
+
+      <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative flex-1">
+          <Search
+            aria-hidden="true"
+            strokeWidth={1.5}
+            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
+          />
+          <Input
             type="search"
-            className={styles.search}
-            placeholder="Search your cases…"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search cases"
+            aria-label="Search cases by title or summary"
+            className="pl-9"
           />
         </div>
-        <p className={styles.resultCount} role="status">
-          {filtered.length} of {cases.length} {cases.length === 1 ? 'case' : 'cases'}
-        </p>
+        <div className="relative sm:w-52">
+          <SlidersHorizontal
+            aria-hidden="true"
+            strokeWidth={1.5}
+            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
+          />
+          <Select
+            value={status}
+            onChange={(event) => setStatus(event.target.value)}
+            aria-label="Filter cases by status"
+            className="pl-9"
+          >
+            <option value="ALL">All statuses</option>
+            <option value="OPEN">Open</option>
+            <option value="IN_PROGRESS">In progress</option>
+            <option value="CLOSED">Closed</option>
+          </Select>
+        </div>
       </div>
 
-      {filtered.length === 0 ? (
-        <EmptyState
-          title="No cases match that search"
-          description="Try a different word, or clear the search to see everything."
-          action={<Button variant="ghost" onClick={() => setQuery('')}>Clear search</Button>}
-        />
-      ) : (
-        <ul className={styles.list}>
-          {filtered.map((c) => (
-            <li key={c.caseId}>
-              <Link to={`/case/${c.caseId}`} className={styles.row}>
-                <div className={styles.rowMain}>
-                  <div className={styles.rowTop}>
-                    <h2 className={styles.rowTitle}>{c.title}</h2>
-                    <StatusChip status={c.status} size="sm" />
+      <p role="status" aria-live="polite" className="sr-only">
+        {filtering ? `${filtered.length} of ${cases.length} cases shown.` : ''}
+      </p>
+
+      {filtered.length ? (
+        <ul className="mt-8 border-t border-lilac">
+          {filtered.map((item, index) => {
+            const count = evidenceByCase[item.caseId]?.length ?? item.evidenceCount;
+            return (
+              <motion.li
+                key={item.caseId}
+                initial={reduced ? false : { opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.22, delay: Math.min(index * 0.03, 0.2), ease: [0.22, 0.61, 0.36, 1] }}
+                className="group border-b border-lilac"
+              >
+                <div
+                  onClick={() => navigate(`/case/${item.caseId}`)}
+                  className="relative cursor-pointer px-2 py-5 transition-colors duration-200 hover:bg-wash/55 sm:px-4"
+                >
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-8">
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-[1.0625rem] font-medium leading-snug text-plum">
+                        <Link
+                          to={`/case/${item.caseId}`}
+                          onClick={(event) => event.stopPropagation()}
+                          className="rounded-sm transition-colors group-hover:text-violet-press"
+                        >
+                          {item.title}
+                        </Link>
+                      </h2>
+                      {item.summary ? (
+                        <p className="mt-1.5 max-w-2xl text-[0.8125rem] leading-relaxed text-muted">
+                          {item.summary}
+                        </p>
+                      ) : null}
+                      <p className="mono mt-2.5 text-[0.6875rem] text-muted">
+                        {item.caseId} · opened {formatDate(item.createdAt)}
+                      </p>
+                    </div>
+
+                    <div className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-2 sm:w-64 sm:flex-col sm:items-end sm:gap-1.5">
+                      <CaseStatusMark status={item.status} />
+                      <p className="mono text-[0.6875rem] text-muted">
+                        {count} sealed {count === 1 ? 'file' : 'files'}
+                      </p>
+                      <p className="mono text-[0.6875rem] text-muted">updated {relativeDay(item.updatedAt)}</p>
+                    </div>
                   </div>
-                  <p className={styles.rowSummary}>{c.summary}</p>
+
+                  {/* Quick actions, revealed on hover and always reachable by keyboard. */}
+                  <div className="mt-4 flex flex-wrap gap-2 transition-opacity duration-200 sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover:opacity-100">
+                    <Button
+                      to={`/case/${item.caseId}/evidence`}
+                      variant="secondary"
+                      size="sm"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      Evidence
+                    </Button>
+                    <Button
+                      to={`/case/${item.caseId}/dossier`}
+                      variant="ghost"
+                      size="sm"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      Dossier
+                    </Button>
+                  </div>
                 </div>
-
-                <dl className={styles.rowMeta}>
-                  <div className={styles.metaItem}>
-                    <dt>Evidence</dt>
-                    <dd>{c.evidenceCount}</dd>
-                  </div>
-                  <div className={styles.metaItem}>
-                    <dt>Updated</dt>
-                    <dd>{relativeDate(c.updatedAt)}</dd>
-                  </div>
-                </dl>
-
-                <ChevronRight className={styles.chevron} aria-hidden="true" strokeWidth={2} />
-              </Link>
-            </li>
-          ))}
+              </motion.li>
+            );
+          })}
         </ul>
+      ) : (
+        <EmptyState
+          className="mt-8"
+          icon={FolderClosed}
+          title={filtering ? 'Nothing matches that' : 'No cases yet'}
+          action={
+            filtering ? (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setQuery('');
+                  setStatus('ALL');
+                }}
+              >
+                Clear search and filter
+              </Button>
+            ) : (
+              <Button variant="primary" onClick={() => setNewCaseOpen(true)}>
+                <Plus aria-hidden="true" strokeWidth={1.5} className="size-4" />
+                Start your first case
+              </Button>
+            )
+          }
+        >
+          {filtering ? (
+            <p>
+              No case matches <span className="text-plum">{query.trim() || 'that filter'}</span>. Try a shorter
+              search, or widen the status filter.
+            </p>
+          ) : (
+            <p>A case holds the files and the timeline for one situation. You can start one now and add to it later.</p>
+          )}
+        </EmptyState>
       )}
+
+      <NewCaseDialog open={newCaseOpen} onOpenChange={setNewCaseOpen} />
     </div>
   );
 }

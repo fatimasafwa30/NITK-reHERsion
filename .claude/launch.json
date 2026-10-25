@@ -2,10 +2,16 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "veratrace-dev",
+      "name": "veratrace",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
-      "port": 5173
+      "port": 5176
+    },
+    {
+      "name": "veratrace-alt-port",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5177", "--strictPort", "false"],
+      "port": 5177
     }
   ]
 }

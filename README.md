@@ -1,83 +1,76 @@
 # VeraTrace
 
-A private, calm place to collect and organize evidence of harassment or abuse, and to keep a
-clear record of what happened.
+A calm, precise place to preserve evidence and keep an organised, timestamped record.
 
-VeraTrace is a prototype built for a short team sprint. It helps someone gather screenshots,
-documents and notes into a case, record a SHA-256 hash for each file so later changes are
-detectable, and lay the result out as a timeline and dossier they can bring to someone they trust.
-
-**What it does not do:** a matching hash shows a file hasn't changed since it was added here. It
-does not prove who created a file, when an incident happened, or guarantee a record will be
-accepted as legal proof. The product language is deliberately honest about this, and so should
-any change you make be.
+Files are read and hashed **on the device**. Nothing is uploaded, and no original file is
+modified. This build is a front-end demonstration: all state lives in the browser.
 
 ## Running it
 
 ```bash
 npm install
-npm run dev
+npm run dev     # http://localhost:5176
+npm run build
+npm run preview
 ```
 
-Then open the URL Vite prints (http://localhost:5173 by default).
+The dev server uses `strictPort`, so port 5176 must be free.
 
-```bash
-npm run build     # production build
-npm run preview   # serve the production build
-```
+## Stack
 
-Requires Node 18+. There is no backend, no database and no network calls — everything runs in
-the browser against mock data.
+Vite · React 18 · React Router v7 (declarative) · Tailwind CSS v4 (`@tailwindcss/vite`, `@theme`
+tokens) · Radix UI (Dialog, Tooltip) · lucide-react · motion · clsx + tailwind-merge ·
+`@fontsource-variable` for Fraunces (display), Inter (UI) and JetBrains Mono (hashes, IDs, times).
 
-## Quick Exit
+## Routes
 
-Every screen has a **Quick exit** control in the top bar, and **pressing Escape anywhere leaves
-the site immediately** (replacing the history entry so the back button doesn't return). This is a
-safety feature for people who may be watched while using the app.
+| Route | What it is |
+| --- | --- |
+| `/` | Landing — editorial composition, a real evidence sheet as the focal specimen |
+| `/dashboard` | Case list with search, status filter and hover-revealed quick actions |
+| `/case/:caseId` | Timeline as the main column, sticky summary/action rail |
+| `/case/:caseId/evidence` | Evidence studio — dropzone, sealed sheets, detail pane |
+| `/case/:caseId/dossier` | Printable dossier + integrity report |
+| `/verify` | Side-by-side hash comparison of two files |
 
-If you touch navigation, layout or keyboard handling, re-check that Quick Exit is still visible
-at every breakpoint — including mobile, where it must never be hidden inside a menu — and that
-Escape still works. The one deliberate exception: while the "Add event" dialog is open, Escape
-closes that dialog instead of exiting.
+## Design system
 
-## Project structure
+Tokens are declared once in `src/styles/app.css` under `@theme`. Nothing in the app hard-codes a
+colour, font, radius or shadow.
 
-```
-src/
-  components/    shared UI: Button, Card, StatusChip, StatCard, EmptyState,
-                 QuickExit, AddEventDialog, AppNav, Logo, Footer
-  layouts/       MarketingLayout (landing), AppLayout (sidebar app shell)
-  pages/         Landing, Dashboard, CaseOverview, EvidenceWorkspace, Dossier
-  hooks/         useCases, useCase, useEvidenceForCase, useTimelineForCase
-                 — the single swap point from mock data to real services
-  data/          mock data, split by domain (mockCases / mockEvidence / mockTimeline)
-                 mockData.js re-exports all three for backwards compatibility
-  services/      empty — see services/README.md for who builds what here
-  styles/        tokens.css (single source of truth) + global.css
-docs/
-  DATA_CONTRACT.md   agreed Case / EvidenceRecord / TimelineEvent shapes
-```
+- **Palette** — ivory, lavender wash, lilac, muted violet, violet-deep, plum ink, muted text.
+  `--color-violet` is decorative and large-text only (4.4:1 on ivory); `--color-violet-deep`
+  (7.8:1) carries every interactive and primary use. All body text passes WCAG AA.
+- **Status** is never carried by colour alone — every state is an icon plus a word
+  (`src/components/ui/StatusMark.jsx`).
+- **Signature pieces** — `EvidenceSheet` (archival sheet), `Timeline` + `TimelineMarker`
+  (solid stop for a confirmed date, dashed stop plus a "date uncertain" label otherwise),
+  `SealMark` (draws itself in once when a file is sealed or verified), and the dossier.
 
-Styling is CSS Modules plus design tokens. There is no CSS framework. Never hardcode a colour,
-size or spacing value — use the tokens in `src/styles/tokens.css`.
+## Safety behaviour
 
-Routes: `/`, `/dashboard`, `/case/:caseId`, `/case/:caseId/evidence`, `/case/:caseId/dossier`.
+- **Quick Exit** sits in the top bar at every width, quieter than the primary action, and
+  **Escape** triggers it globally — including while a dialog is open. Radix dialogs set
+  `onEscapeKeyDown` to `preventDefault()` so they can never swallow the key; they close via
+  Cancel, the X, or a scrim click.
+- **Honest copy.** A matching hash shows a file has not changed since it was added. It does not
+  prove who created it, when the events in it happened, or that it will be accepted as proof.
+  This is stated on the landing page, in every comparison result, and in the dossier.
 
-## Who builds where
+## Demo data
 
-| | Owns | Builds in |
-|---|---|---|
-| **Person 1** | UI/UX, design system, all screens, responsive + accessibility | `src/components`, `src/layouts`, `src/pages`, `src/styles` |
-| **Person 2** | Evidence upload, SHA-256 hashing, integrity verification, timeline | `src/services/evidenceStore.js` |
-| **Person 3** | Case management, persistence, dossier, PDF/ZIP export | `src/services/caseStore.js` |
+`src/data/` holds the mock cases, evidence and timeline, matching the shapes in
+`reference/DATA_CONTRACT.md`. `src/store/VeraStore.jsx` keeps everything in memory and persists
+to `localStorage` inside `try/catch`, so a refresh keeps the demo. Every store function is marked
+`Demo only; replace with real services.` **Reset demo data** lives in the footer.
 
-Read [`src/services/README.md`](src/services/README.md) before starting on Person 2 or Person 3
-work — it lists the exact function names the hooks expect and the UI seams already wired up
-(`onNewCase`, `onAddEvidence`, `onAddTimelineEvent`), so you can add real behaviour in new files
-without editing page components.
+Note: three of the four seeded `sha256` values in `reference/` are 63 hex characters rather than
+64. The copies in `src/data/mockEvidence.js` are padded to valid 64-character digests; field
+names and record shapes are unchanged.
 
-Two rules that keep the three of us from colliding:
+## Known limits
 
-1. **Don't change the shapes in `docs/DATA_CONTRACT.md`** without telling the other two.
-2. **Swap mocks at the hook layer**, not inside pages. Every page already reads
-   `{ data, loading, error }`.
+- `Download evidence ZIP` is visibly disabled and marked "Coming with backend" — bundling
+  original files needs a server, and this build deliberately keeps every file on the device.
+- Hashing is capped at 50 MB per file.
+- Case titles, summaries and statuses cannot be edited after creation.
