@@ -2,11 +2,12 @@
 
 **A privacy-first digital evidence preservation and cross-platform harassment pattern analysis engine.**
 
+> 🚀 **Live Demo:** [https://veratrace-app.vercel.app](https://veratrace-app.vercel.app)  
+> Experience VeraTrace live in your browser: explore interactive cross-platform harassment correlation graphs, test client-side SHA-256 evidence sealing, inspect chronological timelines, and generate forensic dossiers with Section 63 BSA legal certificates.
+
 VeraTrace enables individuals, legal advocates, and investigators to catalog, cryptographically seal, correlate, and organize electronic evidence scattered across communication platforms into an immutable, court-ready forensic dossier.
 
 All processing, hashing, and storage occur **entirely on the user's device**. Nothing is uploaded to external cloud servers, and original files are never altered.
-
-> 🌐 **Live Production Application:** [https://veratrace-app.vercel.app](https://veratrace-app.vercel.app)
 
 ---
 
