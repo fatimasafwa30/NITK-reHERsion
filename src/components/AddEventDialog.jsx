@@ -1,227 +1,284 @@
-import { useEffect, useRef, useState, useId } from 'react';
-import { X } from 'lucide-react';
-import Button from './Button';
-import styles from './AddEventDialog.module.css';
+import { useEffect, useState } from 'react';
+import { Button } from './ui/Button';
+import { Dialog, DialogClose } from './ui/Dialog';
+import { Field, Input, Select, Textarea, Label } from './ui/Field';
+import { useVera } from '../store/VeraStore';
+import { useToast } from '../store/ToastProvider';
+import { cn } from '../lib/cn';
 
-const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+const CONFIDENCE = [
+  {
+    value: 'confirmed',
+    title: 'Confirmed',
+    body: 'I am sure of this date.',
+  },
+  {
+    value: 'uncertain',
+    title: 'Date uncertain',
+    body: 'Roughly when it happened. It will be marked as uncertain.',
+  },
+];
 
-/**
- * Accessible dialog for adding a timeline event.
- *
- * Note on Escape: Escape is deliberately NOT intercepted here so QuickExit's
- * global Escape handler can trigger at all times, even while this dialog is open.
- *
- * @param {{
- *   open: boolean,
- *   onClose: () => void,
- *   onSubmit: (event: object) => void,
- *   evidenceOptions?: {evidenceId: string, fileName: string}[],
- * }} props
- */
-export default function AddEventDialog({ open, onClose, onSubmit, evidenceOptions = [] }) {
-  const dialogRef = useRef(null);
-  const firstFieldRef = useRef(null);
-  const titleId = useId();
+export function AddEventDialog({
+  open,
+  onOpenChange,
+  onClose,
+  onSubmit,
+  caseId,
+  evidence = [],
+  evidenceOptions = [],
+}) {
+  const vera = (() => {
+    try {
+      return useVera();
+    } catch {
+      return null;
+    }
+  })();
+  const toast = (() => {
+    try {
+      return useToast();
+    } catch {
+      return () => {};
+    }
+  })();
 
   const [label, setLabel] = useState('');
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
   const [confidence, setConfidence] = useState('confirmed');
   const [relatedEvidenceId, setRelatedEvidenceId] = useState('');
-  const [touched, setTouched] = useState(false);
+  const [platform, setPlatform] = useState('');
+  const [senderHandle, setSenderHandle] = useState('');
+  const [blockedPrior, setBlockedPrior] = useState(false);
+  const [errors, setErrors] = useState({});
 
-  // Reset the form on open, and hand focus back to whatever opened the
-  // dialog when it closes (cleanup runs exactly on close/unmount).
+  const effectiveEvidence = evidence.length ? evidence : evidenceOptions;
+
+  const handleClose = () => {
+    onOpenChange?.(false);
+    onClose?.();
+  };
+
   useEffect(() => {
-    if (!open) return undefined;
-
-    setLabel(''); setDate(''); setTime('');
-    setConfidence('confirmed'); setRelatedEvidenceId(''); setTouched(false);
-
-    // Capture the opener BEFORE moving focus, then move focus into the
-    // dialog. (Order matters: autoFocus would run before this effect and
-    // make us capture a field inside the dialog as the "opener".)
-    const opener = document.activeElement;
-    firstFieldRef.current?.focus();
-
-    return () => {
-      if (opener instanceof HTMLElement && document.contains(opener)) {
-        opener.focus();
-      }
-    };
+    if (open) {
+      setLabel('');
+      setDate('');
+      setTime('');
+      setConfidence('confirmed');
+      setRelatedEvidenceId('');
+      setPlatform('');
+      setSenderHandle('');
+      setBlockedPrior(false);
+      setErrors({});
+    }
   }, [open]);
 
-  // Focus trap while open (Escape is left untouched so QuickExit triggers).
-  useEffect(() => {
-    if (!open) return undefined;
+  const submit = (event) => {
+    event.preventDefault();
+    const next = {};
+    if (!label.trim()) next.label = 'Describe what happened so the entry means something later.';
+    if (confidence === 'confirmed' && !date) next.date = 'A confirmed event needs a date, or mark it uncertain.';
+    setErrors(next);
+    if (Object.keys(next).length) return;
 
-    function onKeyDownCapture(e) {
-      if (e.key === 'Tab') {
-        const nodes = dialogRef.current?.querySelectorAll(FOCUSABLE);
-        if (!nodes || nodes.length === 0) return;
-        const list = Array.from(nodes).filter((n) => !n.disabled);
-        const first = list[0];
-        const last = list[list.length - 1];
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
+    // A date with no time is stored at midnight; no time is invented.
+    const occurredAt = date ? new Date(`${date}T${time || '00:00'}`).toISOString() : null;
+
+    if (onSubmit) {
+      onSubmit({
+        label: label.trim(),
+        occurredAt,
+        timeConfidence: confidence,
+        relatedEvidenceId: relatedEvidenceId || null,
+        platform: platform || undefined,
+        senderHandle: senderHandle.trim() || undefined,
+        blockedPrior: Boolean(blockedPrior),
+      });
+    } else if (vera?.addEvent && caseId) {
+      vera.addEvent(caseId, {
+        label,
+        occurredAt,
+        timeConfidence: confidence,
+        relatedEvidenceId,
+        platform: platform || undefined,
+        senderHandle: senderHandle.trim() || undefined,
+        blockedPrior: Boolean(blockedPrior),
+      });
     }
 
-    window.addEventListener('keydown', onKeyDownCapture, true);
-    return () => window.removeEventListener('keydown', onKeyDownCapture, true);
-  }, [open]);
-
-  if (!open) return null;
-
-  function handleSubmit(e) {
-    e.preventDefault();
-    setTouched(true);
-    if (!label.trim()) return;
-
-    // Matches the TimelineEvent shape in docs/DATA_CONTRACT.md exactly.
-    const occurredAt = date
-      ? new Date(`${date}T${time || '00:00'}`).toISOString()
-      : null;
-
-    onSubmit({
-      eventId: `tl_local_${Date.now().toString(36)}`,
-      occurredAt,
-      timeConfidence: confidence,
-      label: label.trim(),
-      relatedEvidenceId: relatedEvidenceId || null,
+    handleClose();
+    toast('Event added to the timeline', {
+      detail: occurredAt ? undefined : 'Recorded without a date, marked uncertain.',
     });
-    onClose();
-  }
-
-  const labelMissing = touched && !label.trim();
+  };
 
   return (
-    <>
-      <div className={styles.scrim} onClick={onClose} aria-hidden="true" />
-      <div
-        className={styles.dialog}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        ref={dialogRef}
-      >
-        <div className={styles.head}>
-          <h2 id={titleId} className={styles.title}>Add a timeline event</h2>
-          <button type="button" className={styles.close} onClick={onClose} aria-label="Close">
-            <X strokeWidth={2} aria-hidden="true" />
-          </button>
+    <Dialog
+      open={open}
+      onOpenChange={(val) => {
+        if (!val) handleClose();
+        else onOpenChange?.(val);
+      }}
+      title="Add a timeline event"
+      description="Events can be added at any time. An uncertain date is better than no record."
+      footer={
+        <>
+          <DialogClose asChild>
+            <Button variant="secondary" onClick={handleClose}>Cancel</Button>
+          </DialogClose>
+          <Button variant="primary" type="submit" form="add-event-form">
+            Add event
+          </Button>
+        </>
+      }
+    >
+      <form id="add-event-form" onSubmit={submit} className="space-y-5">
+        <Field label="What happened" error={errors.label}>
+          {(props) => (
+            <Textarea
+              {...props}
+              value={label}
+              onChange={(event) => {
+                setLabel(event.target.value);
+                if (errors.label) setErrors((e) => ({ ...e, label: undefined }));
+              }}
+              placeholder="First unwanted message received"
+              autoFocus
+            />
+          )}
+        </Field>
+
+        <fieldset>
+          <legend className="pb-1.5 text-[0.8125rem] font-medium text-plum">How sure are you of the date?</legend>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {CONFIDENCE.map((option) => (
+              <label
+                key={option.value}
+                className={cn(
+                  'flex cursor-pointer gap-2.5 rounded-md border px-3 py-3 transition-colors duration-150',
+                  confidence === option.value
+                    ? 'border-violet-deep bg-wash/70'
+                    : 'border-lilac bg-paper hover:border-violet',
+                )}
+              >
+                <input
+                  type="radio"
+                  name="confidence"
+                  value={option.value}
+                  checked={confidence === option.value}
+                  onChange={() => {
+                    setConfidence(option.value);
+                    setErrors((e) => ({ ...e, date: undefined }));
+                  }}
+                  className="mt-0.5 size-4 shrink-0 accent-[var(--color-violet-deep)]"
+                />
+                <span className="min-w-0">
+                  <span className="block text-[0.8125rem] font-medium text-plum">{option.title}</span>
+                  <span className="mt-0.5 block text-xs leading-relaxed text-muted">{option.body}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="Date"
+            hint={confidence === 'uncertain' ? 'Optional' : undefined}
+            error={errors.date}
+          >
+            {(props) => (
+              <Input
+                {...props}
+                type="date"
+                value={date}
+                onChange={(event) => {
+                  setDate(event.target.value);
+                  if (errors.date) setErrors((e) => ({ ...e, date: undefined }));
+                }}
+              />
+            )}
+          </Field>
+          <Field label="Time" hint="Optional">
+            {(props) => <Input {...props} type="time" value={time} onChange={(event) => setTime(event.target.value)} />}
+          </Field>
         </div>
 
-        <p className={styles.intro}>
-          Add something that happened. If you're not sure exactly when, say so — an uncertain
-          date is still worth recording.
-        </p>
+        <div>
+          <Label htmlFor="related-evidence" hint="Optional">
+            Related evidence
+          </Label>
+          <Select
+            id="related-evidence"
+            value={relatedEvidenceId}
+            onChange={(event) => setRelatedEvidenceId(event.target.value)}
+            disabled={!effectiveEvidence.length}
+          >
+            <option value="">No related file</option>
+            {effectiveEvidence.map((record) => (
+              <option key={record.evidenceId} value={record.evidenceId}>
+                {record.fileName}
+              </option>
+            ))}
+          </Select>
+          {!effectiveEvidence.length ? (
+            <p className="mt-1.5 text-xs text-muted">This case has no sealed files yet.</p>
+          ) : null}
+        </div>
 
-        <form onSubmit={handleSubmit} noValidate>
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor="event-label">
-              What happened <span className={styles.req}>*</span>
-            </label>
-            <textarea
-              id="event-label"
-              ref={firstFieldRef}
-              className={styles.textarea}
-              rows={3}
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              aria-invalid={labelMissing || undefined}
-              aria-describedby={labelMissing ? 'event-label-error' : undefined}
-              placeholder="e.g. Received a threatening message on my work account"
-            />
-            {labelMissing && (
-              <p id="event-label-error" className={styles.error} role="alert">
-                Please describe what happened.
-              </p>
+        <div className="grid gap-4 sm:grid-cols-2 pt-1 border-t border-lilac/50">
+          <div>
+            <Label htmlFor="event-platform" hint="Optional">
+              Platform / Source
+            </Label>
+            <Select
+              id="event-platform"
+              value={platform}
+              onChange={(event) => setPlatform(event.target.value)}
+            >
+              <option value="">Auto-detect from text</option>
+              <option value="WhatsApp">WhatsApp</option>
+              <option value="Instagram">Instagram</option>
+              <option value="Email">Email</option>
+              <option value="Facebook">Facebook</option>
+              <option value="Telegram">Telegram</option>
+              <option value="Phone Call">Phone / Voicemail</option>
+              <option value="SMS">SMS / Text</option>
+              <option value="Other">Other</option>
+            </Select>
+          </div>
+
+          <Field label="Sender handle or phone" hint="Optional">
+            {(props) => (
+              <Input
+                {...props}
+                type="text"
+                value={senderHandle}
+                onChange={(event) => setSenderHandle(event.target.value)}
+                placeholder="e.g. @anonymous or +91 98..."
+              />
             )}
-          </div>
+          </Field>
+        </div>
 
-          <div className={styles.row}>
-            <div className={styles.field}>
-              <label className={styles.label} htmlFor="event-date">Date</label>
-              <input
-                id="event-date"
-                type="date"
-                className={styles.input}
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-              />
-            </div>
-            <div className={styles.field}>
-              <label className={styles.label} htmlFor="event-time">
-                Time <span className={styles.optional}>(optional)</span>
-              </label>
-              <input
-                id="event-time"
-                type="time"
-                className={styles.input}
-                value={time}
-                onChange={(e) => setTime(e.target.value)}
-                disabled={!date}
-              />
-            </div>
-          </div>
-
-          <fieldset className={styles.fieldset}>
-            <legend className={styles.label}>How sure are you about the time?</legend>
-            <div className={styles.radios}>
-              <label className={styles.radio}>
-                <input
-                  type="radio"
-                  name="confidence"
-                  value="confirmed"
-                  checked={confidence === 'confirmed'}
-                  onChange={() => setConfidence('confirmed')}
-                />
-                I'm confident
-              </label>
-              <label className={styles.radio}>
-                <input
-                  type="radio"
-                  name="confidence"
-                  value="uncertain"
-                  checked={confidence === 'uncertain'}
-                  onChange={() => setConfidence('uncertain')}
-                />
-                It's approximate
-              </label>
-            </div>
-          </fieldset>
-
-          {evidenceOptions.length > 0 && (
-            <div className={styles.field}>
-              <label className={styles.label} htmlFor="event-evidence">
-                Link to evidence <span className={styles.optional}>(optional)</span>
-              </label>
-              <select
-                id="event-evidence"
-                className={styles.input}
-                value={relatedEvidenceId}
-                onChange={(e) => setRelatedEvidenceId(e.target.value)}
-              >
-                <option value="">Not linked to a file</option>
-                {evidenceOptions.map((item) => (
-                  <option key={item.evidenceId} value={item.evidenceId}>{item.fileName}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          <div className={styles.actions}>
-            <Button variant="ghost" onClick={onClose}>Cancel</Button>
-            <button type="submit" className={styles.submit}>Add to timeline</button>
-          </div>
-        </form>
-      </div>
-    </>
+        <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-lilac/70 bg-wash/40 p-3 text-xs text-plum hover:bg-wash/70">
+          <input
+            type="checkbox"
+            checked={blockedPrior}
+            onChange={(e) => setBlockedPrior(e.target.checked)}
+            className="mt-0.5 size-4 shrink-0 rounded accent-[var(--color-violet-deep)]"
+          />
+          <span>
+            <strong className="block font-medium">Contact resumed after block</strong>
+            <span className="text-muted text-[0.6875rem]">
+              Check this if this contact occurred after you had previously blocked the sender or explicitly requested no contact.
+            </span>
+          </span>
+        </label>
+      </form>
+    </Dialog>
   );
 }
+
+export default AddEventDialog;

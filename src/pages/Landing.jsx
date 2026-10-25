@@ -1,138 +1,243 @@
-import { ShieldCheck, Clock3, FileText, Lock, EyeOff, ArrowRight } from 'lucide-react';
-import Button from '../components/Button';
-import StatusChip from '../components/StatusChip';
-import styles from './Landing.module.css';
+import { Link } from 'react-router-dom';
+import { cn } from '../lib/cn';
+import { motion, useReducedMotion } from 'motion/react';
+import { ArrowRight } from 'lucide-react';
+import { Button } from '../components/ui/Button';
+import { Reveal } from '../motion/Reveal';
+import { DURATION, EASE, heroDelay, riseIn } from '../motion/tokens';
+import { EvidenceSheet } from '../components/EvidenceSheet';
+import { Timeline } from '../components/Timeline';
+import { mockEvidenceByCase } from '../data/mockEvidence';
+import { mockTimelineByCase } from '../data/mockTimeline';
+
+const SPECIMEN = mockEvidenceByCase.case_1001[0];
+const SPECIMEN_BEHIND = mockEvidenceByCase.case_1001[1];
+const SPECIMEN_EVENTS = mockTimelineByCase.case_1001;
+const SPECIMEN_EVIDENCE_BY_ID = Object.fromEntries(
+  mockEvidenceByCase.case_1001.map((record) => [record.evidenceId, record]),
+);
+
+/**
+ * The headline, word by word, so it can rise in sequence. The text itself is
+ * unchanged — `textContent` still reads as one sentence for screen readers and
+ * for the route announcer.
+ */
+const HEADLINE = [
+  'Keep',
+  'the',
+  'record',
+  { text: 'straight,', em: true },
+  'long',
+  'before',
+  'anyone',
+  'asks',
+  'for',
+  'it.',
+];
 
 const STEPS = [
-  { n: '01', title: 'Start a private case', body: 'Name it something only you would recognize. Nothing is shared or visible to anyone else.' },
-  { n: '02', title: 'Add evidence as it happens', body: 'Screenshots, messages, documents. Each one is recorded with its details so you can find it again.' },
-  { n: '03', title: 'See it laid out clearly', body: 'A timeline and summary you can bring to someone you trust, whenever you decide to.' },
+  {
+    n: '01',
+    title: 'Add the file',
+    body: 'A screenshot, a recording, an email. It is read on your device and nothing is uploaded.',
+  },
+  {
+    n: '02',
+    title: 'It is sealed',
+    body: 'VeraTrace computes a SHA-256 hash — a fingerprint of those exact bytes — and records the time.',
+  },
+  {
+    n: '03',
+    title: 'Check it later',
+    body: 'Compare the file against its hash at any point to show it has not been altered since.',
+  },
 ];
 
-const REASSURANCE = [
-  { Icon: Lock, title: 'Stays on your device', body: 'Nothing is uploaded to a server. Your records are yours alone.' },
-  { Icon: EyeOff, title: 'Leave in one tap', body: 'Quick exit is on every screen, and the Escape key works anywhere.' },
-  { Icon: ShieldCheck, title: 'Honest about limits', body: "We'll always tell you what a record does and doesn't prove." },
-];
+export function Landing() {
+  const reduced = useReducedMotion();
+  // The hero sequence: one stagger step per element, capped so the whole thing
+  // settles inside 1.4s. Nothing here gates interaction — every control is live
+  // and clickable on the first frame, mid-animation included.
+  const rise = (step) => riseIn(reduced, { delay: heroDelay(step) });
 
-export default function Landing() {
   return (
     <>
-      {/* ---------- Hero: asymmetric, text left, specimen card right ---------- */}
-      <section className={styles.hero}>
-        <div className={`${styles.heroInner} page`}>
-          <div className={styles.heroCopy}>
-            <p className="eyebrow">Evidence, kept carefully</p>
-            <h1 className={styles.heroTitle}>
-              You shouldn't have to hold it <em className={styles.em}>all</em> in your head.
+      {/* ── Hero: deliberately off-balance. Words left, evidence right and low. */}
+      <section className="mx-auto w-full max-w-6xl px-5 pb-20 pt-14 sm:px-8 sm:pb-28 sm:pt-20 lg:pt-24">
+        <div className="grid items-start gap-14 lg:grid-cols-12 lg:gap-10">
+          <div className="lg:col-span-7">
+            <motion.p className="eyebrow" {...rise(0)}>
+              Evidence preservation
+            </motion.p>
+
+            <h1 className="display-xl mt-5 max-w-[19ch] text-plum">
+              {HEADLINE.map((part, index) => {
+                const word = typeof part === 'string' ? part : part.text;
+                const italic = typeof part !== 'string' && part.em;
+                return (
+                  <motion.span
+                    key={`${word}-${index}`}
+                    className={cn('inline-block whitespace-pre', italic && 'italic')}
+                    {...rise(1 + index * 0.5)}
+                  >
+                    {word}
+                    {index < HEADLINE.length - 1 ? ' ' : ''}
+                  </motion.span>
+                );
+              })}
             </h1>
-            <p className={styles.heroLede}>
-              VeraTrace helps you quietly collect and organize evidence of harassment or abuse —
-              in one place, in your own time, at your own pace.
-            </p>
-            <div className={styles.heroActions}>
-              <Button to="/dashboard" size="lg" iconRight={<ArrowRight />}>Open my cases</Button>
-              <Button href="#how-it-works" variant="ghost" size="lg">See how it works</Button>
-            </div>
-            <p className={styles.heroFoot}>
-              Free · No account needed · Works on your phone
-            </p>
+
+            <motion.p className="mt-7 max-w-lg text-[1.0625rem] leading-relaxed text-muted" {...rise(2)}>
+              VeraTrace is a quiet place to preserve what happened. Every file you add is fingerprinted with
+              SHA-256 on your own device and set down in a timestamped record you can read, order, and hand over
+              when you choose to.
+            </motion.p>
+
+            <motion.div className="mt-9 flex flex-wrap items-center gap-x-6 gap-y-3" {...rise(3)}>
+              <Button to="/dashboard" variant="primary" size="lg">
+                Open your cases
+                <ArrowRight aria-hidden="true" strokeWidth={1.5} className="size-4" />
+              </Button>
+              <Link
+                to="/verify"
+                className="min-h-11 inline-flex items-center text-sm text-violet-deep underline decoration-lilac decoration-1 underline-offset-4 transition-colors hover:decoration-violet"
+              >
+                Or check a file you already have
+              </Link>
+            </motion.div>
+
+            <motion.p className="mono mt-10 max-w-md text-[0.6875rem] leading-relaxed text-muted" {...rise(4)}>
+              Press <span className="text-plum">Esc</span> at any moment to leave for a neutral page.
+            </motion.p>
           </div>
 
-          <div className={styles.heroVisual} aria-hidden="true">
-            <div className={styles.specimen}>
-              <div className={styles.specimenHead}>
-                <span className={styles.specimenTitle}>Workplace harassment</span>
-                <StatusChip status="IN_PROGRESS" size="sm" />
+          {/* The focal visual is the real component, not a picture of one. */}
+          <motion.div
+            className="lg:col-span-5 lg:pt-12"
+            initial={reduced ? { opacity: 0 } : { opacity: 0, y: 24, rotate: 1.5 }}
+            animate={reduced ? { opacity: 1 } : { opacity: 1, y: 0, rotate: 0 }}
+            transition={
+              reduced
+                ? { duration: 0.1, ease: 'linear' }
+                : { duration: DURATION.hero, delay: heroDelay(5), ease: EASE.out }
+            }
+          >
+            <div className="relative">
+              <div
+                aria-hidden="true"
+                className="absolute -right-5 -top-6 hidden w-full rotate-[2.2deg] sm:block"
+              >
+                <EvidenceSheet record={SPECIMEN_BEHIND} className="opacity-70 shadow-none" />
               </div>
-              <ul className={styles.specimenList}>
-                <li className={styles.specimenRow}>
-                  <FileText className={styles.rowIcon} strokeWidth={2} />
-                  <span className={styles.rowName}>chat-screenshot-1.png</span>
-                  <StatusChip status="MATCH" size="sm" />
-                </li>
-                <li className={styles.specimenRow}>
-                  <FileText className={styles.rowIcon} strokeWidth={2} />
-                  <span className={styles.rowName}>email-thread.pdf</span>
-                  <StatusChip status="UNVERIFIED" size="sm" />
-                </li>
-                <li className={styles.specimenRow}>
-                  <FileText className={styles.rowIcon} strokeWidth={2} />
-                  <span className={styles.rowName}>voicemail-03.m4a</span>
-                  <StatusChip status="MATCH" size="sm" />
-                </li>
-              </ul>
-              <div className={styles.specimenFoot}>
-                <Clock3 className={styles.rowIcon} strokeWidth={2} />
-                <span>6 items · first recorded 14 Sept</span>
-              </div>
-            </div>
-            <div className={styles.specimenGlow} />
-          </div>
-        </div>
-      </section>
-
-      {/* ---------- Process strip: horizontal on desktop ---------- */}
-      <section id="how-it-works" className={styles.process}>
-        <div className="page">
-          <div className={styles.sectionHead}>
-            <h2 className={styles.sectionTitle}>Three steps, whenever you're ready</h2>
-            <p className={styles.sectionLede}>
-              There's no deadline and no pressure to finish. You can stop after step one and come back later.
-            </p>
-          </div>
-
-          <ol className={styles.steps}>
-            {STEPS.map((s) => (
-              <li key={s.n} className={styles.step}>
-                <span className={styles.stepNum}>{s.n}</span>
-                <h3 className={styles.stepTitle}>{s.title}</h3>
-                <p className={styles.stepBody}>{s.body}</p>
-              </li>
-            ))}
-          </ol>
-        </div>
-      </section>
-
-      {/* ---------- Reassurance row ---------- */}
-      <section className={styles.reassure}>
-        <div className={`${styles.reassureInner} page`}>
-          {REASSURANCE.map(({ Icon, title, body }) => (
-            <div key={title} className={styles.reassureItem}>
-              <span className={styles.reassureIcon}><Icon strokeWidth={1.8} aria-hidden="true" /></span>
-              <div>
-                <h3 className={styles.reassureTitle}>{title}</h3>
-                <p className={styles.reassureBody}>{body}</p>
+              <div className="relative">
+                <EvidenceSheet record={SPECIMEN} tone="specimen" />
               </div>
             </div>
-          ))}
+            <p className="mono mt-4 pl-1 text-[0.625rem] tracking-[0.1em] text-muted">
+              SPECIMEN · ONE SEALED RECORD, AS STORED
+            </p>
+          </motion.div>
         </div>
       </section>
 
-      {/* ---------- Honesty note ---------- */}
-      <section className={styles.honesty}>
-        <div className={`${styles.honestyInner} page`}>
-          <p className="eyebrow">Worth knowing</p>
-          <p className={styles.honestyText}>
-            A matching hash shows a file hasn't changed since you added it. It doesn't prove who created
-            the file, when the incident happened, or guarantee a record will be accepted as legal proof.
-            Think of VeraTrace as a careful notebook — not a courtroom guarantee.
-          </p>
-        </div>
-      </section>
+      {/* ── Process: one rule, three stops. */}
+      <Reveal as="section" className="border-y border-lilac bg-wash/45" aria-labelledby="process-heading">
+        <div className="mx-auto w-full max-w-6xl px-5 py-16 sm:px-8 sm:py-20">
+          <h2 id="process-heading" className="display-lg max-w-md text-plum">
+            Three steps, and then it is on the record.
+          </h2>
 
-      {/* ---------- Full-bleed CTA band, sits directly above the footer ---------- */}
-      <section className={styles.ctaBand}>
-        <div className={`${styles.ctaInner} page`}>
-          <div>
-            <h2 className={styles.ctaTitle}>Ready when you are</h2>
-            <p className={styles.ctaBody}>Start with one screenshot. That's enough for today.</p>
+          <div className="relative mt-14">
+            <span
+              aria-hidden="true"
+              className="absolute left-[13px] top-2 hidden h-px w-full bg-lilac sm:block"
+              style={{ width: 'calc(100% - 26px)' }}
+            />
+            <ol className="grid gap-10 sm:grid-cols-3 sm:gap-8">
+              {STEPS.map((step) => (
+                <li key={step.n} className="relative pl-10 sm:pl-0">
+                  <span
+                    aria-hidden="true"
+                    className="absolute left-0 top-0 grid size-[26px] place-items-center rounded-full border border-violet-deep bg-ivory sm:static sm:mb-6"
+                  >
+                    <span className="mono text-[0.625rem] font-medium text-violet-deep">{step.n}</span>
+                  </span>
+                  <h3 className="display-md text-plum">{step.title}</h3>
+                  <p className="mt-2.5 max-w-xs text-sm leading-relaxed text-muted">{step.body}</p>
+                </li>
+              ))}
+            </ol>
           </div>
-          <Button to="/dashboard" variant="secondary" size="lg" iconRight={<ArrowRight />}>
-            Open my cases
-          </Button>
         </div>
-      </section>
+      </Reveal>
+
+      {/* ── The second signature element, shown rather than described. */}
+      <Reveal as="section" className="mx-auto w-full max-w-6xl px-5 py-20 sm:px-8 sm:py-24">
+        <div className="grid gap-12 lg:grid-cols-12 lg:gap-16">
+          <div className="lg:col-span-5">
+            <p className="eyebrow">The timeline</p>
+            <h2 className="display-lg mt-5 max-w-[22ch] text-plum">
+              An honest order of events — <em className="italic">including</em> the parts you are unsure about.
+            </h2>
+            <p className="mt-6 max-w-md text-[0.9375rem] leading-relaxed text-muted">
+              Memory is not a clean ledger, and a record that pretends otherwise is weaker, not stronger. Dates you
+              are certain of get a solid mark. Dates you are not get a dashed one and are labelled as uncertain, so
+              nothing in the record overstates what you know.
+            </p>
+          </div>
+
+          <div className="lg:col-span-6 lg:col-start-7">
+            <div className="rounded-lg border border-lilac bg-paper p-6 shadow-sheet sm:p-8">
+              <p className="mono text-[0.625rem] tracking-[0.1em] text-muted">
+                SPECIMEN · CASE_1001
+              </p>
+              <hr className="rule my-5" />
+              <Timeline events={SPECIMEN_EVENTS} evidenceById={SPECIMEN_EVIDENCE_BY_ID} />
+            </div>
+          </div>
+        </div>
+      </Reveal>
+
+      {/* ── Honest limits, in plain prose. No box, no icon, no reassurance. */}
+      <Reveal as="section" className="border-t border-lilac" aria-labelledby="limits-heading">
+        <div className="mx-auto w-full max-w-6xl px-5 py-16 sm:px-8 sm:py-20">
+          <div className="max-w-2xl">
+            <h2 id="limits-heading" className="eyebrow">
+              What this does, and what it does not
+            </h2>
+            <p className="mt-6 text-[1.0625rem] leading-relaxed text-plum">
+              A matching hash shows one thing precisely: this file has not changed since you added it. It does not
+              prove who made the file, when the events inside it happened, or that any court, employer or platform
+              will accept it as proof. VeraTrace keeps your record orderly and verifiable on its own terms — the
+              rest depends on people, and on advice from someone qualified to give it.
+            </p>
+            <p className="mt-5 text-sm leading-relaxed text-muted">
+              If you are in immediate danger, contact your local emergency number first. This is a tool for keeping
+              a record, not a substitute for support, legal advice, or safety planning.
+            </p>
+          </div>
+        </div>
+      </Reveal>
+
+      {/* ── Closing band. */}
+      <Reveal as="section" className="border-t border-lilac bg-wash/55">
+        <div className="mx-auto w-full max-w-6xl px-5 py-20 sm:px-8 sm:py-24">
+          <div className="flex flex-col gap-8 sm:flex-row sm:items-end sm:justify-between">
+            <h2 className="display-lg max-w-[20ch] text-plum">
+              Start with one file. The record builds itself from there.
+            </h2>
+            <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
+              <Button to="/dashboard" variant="primary" size="lg">
+                Open your cases
+                <ArrowRight aria-hidden="true" strokeWidth={1.5} className="size-4" />
+              </Button>
+              <p className="mono text-[0.625rem] tracking-[0.1em] text-muted">NO ACCOUNT · NOTHING UPLOADED</p>
+            </div>
+          </div>
+        </div>
+      </Reveal>
     </>
   );
 }
+
+export default Landing;

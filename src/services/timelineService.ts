@@ -26,6 +26,43 @@ const caseEventsMap = new Map<string, Map<string, UserIncidentEvent>>();
 // Case-scoped in-memory evidence records map
 const caseEvidenceMap = new Map<string, Map<string, TimelineEvidenceInput>>();
 
+const TIMELINE_STORAGE_KEY = 'veratrace_timeline_events_v1';
+
+function loadPersistedTimeline(): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    const raw = window.localStorage.getItem(TIMELINE_STORAGE_KEY);
+    if (raw) {
+      const events: UserIncidentEvent[] = JSON.parse(raw);
+      for (const ev of events) {
+        if (!caseEventsMap.has(ev.caseId)) {
+          caseEventsMap.set(ev.caseId, new Map());
+        }
+        caseEventsMap.get(ev.caseId)!.set(ev.eventId, ev);
+      }
+    }
+  } catch {
+    // Ignore corrupt storage
+  }
+}
+
+function persistTimeline(): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    const allEvents: UserIncidentEvent[] = [];
+    for (const map of caseEventsMap.values()) {
+      for (const ev of map.values()) {
+        allEvents.push(ev);
+      }
+    }
+    window.localStorage.setItem(TIMELINE_STORAGE_KEY, JSON.stringify(allEvents));
+  } catch {
+    // Ignore storage quota
+  }
+}
+
+loadPersistedTimeline();
+
 // Timeline change listeners: caseId -> Set<listener>
 type TimelineListener = () => void;
 const timelineListeners = new Map<string, Set<TimelineListener>>();
@@ -58,6 +95,16 @@ function notifyTimelineSubscribers(caseId: string): void {
       }
     }
   }
+  const wildcard = timelineListeners.get('*');
+  if (wildcard) {
+    for (const listener of wildcard) {
+      try {
+        listener();
+      } catch (err) {
+        console.error('Error in wildcard timeline listener:', err);
+      }
+    }
+  }
 }
 
 /**
@@ -81,6 +128,7 @@ export function addTimelineEventForCase(
     caseId: normCaseId,
   };
   events.set(eventId, normalizedEvent);
+  persistTimeline();
   notifyTimelineSubscribers(normCaseId);
 
   const timeline = getTimelineForCase(normCaseId);
@@ -130,5 +178,6 @@ export function clearTimelineForCase(caseId: string): void {
   const normCaseId = caseId.trim();
   caseEventsMap.delete(normCaseId);
   caseEvidenceMap.delete(normCaseId);
+  persistTimeline();
   notifyTimelineSubscribers(normCaseId);
 }

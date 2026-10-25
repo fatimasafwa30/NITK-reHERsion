@@ -185,6 +185,9 @@ export function buildChronologicalTimeline(
       timezone: event.claimedTimezone || null,
       evidenceRecords: evidenceSummaries,
       discrepancies,
+      platform: (event as any).platform,
+      senderHandle: (event as any).senderHandle,
+      blockedPrior: (event as any).blockedPrior,
     });
   }
 

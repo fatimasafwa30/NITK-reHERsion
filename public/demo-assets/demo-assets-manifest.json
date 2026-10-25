@@ -1,0 +1,35 @@
+{
+  "generatedAt": "2026-10-25T15:49:01.184Z",
+  "files": [
+    {
+      "name": "chat-whatsapp-incident-1.png",
+      "sha256": "657097d4b533c4df0ec8bac27ade247e469aeaef44b9b5ea9d38fc2e224abbdf",
+      "size": 8863,
+      "mimeType": "image/png"
+    },
+    {
+      "name": "chat-instagram-incident-2.png",
+      "sha256": "c96367053bb9167c448d13e110398c0681790c87c37c04d79fde94eb62ab2577",
+      "size": 8587,
+      "mimeType": "image/png"
+    },
+    {
+      "name": "chat-sms-incident-3.png",
+      "sha256": "7c05baba2ebb55e6c8e92dd00cd2d7cbabf0942f20deb85f9969f133ce8d59cd",
+      "size": 6737,
+      "mimeType": "image/png"
+    },
+    {
+      "name": "whatsapp-chat-export-oct2026.txt",
+      "sha256": "e22924e3dca4722a09f8e988924e4f9103b57358b622bf93b151c00f97ba910b",
+      "size": 1613,
+      "mimeType": "text/plain"
+    },
+    {
+      "name": "hr-incident-report-oct2026.pdf",
+      "sha256": "3488bdbd8f90502e7dce56c62cd4029719f37cef1d9273015a5687baa33408a0",
+      "size": 2811,
+      "mimeType": "application/pdf"
+    }
+  ]
+}

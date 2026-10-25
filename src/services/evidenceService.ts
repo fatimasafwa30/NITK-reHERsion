@@ -27,6 +27,12 @@ import {
   SOFTWARE_COMPONENTS,
 } from '../lib/forensics/provenanceRecorder.js';
 import { syncEvidenceToTimeline } from './timelineService.js';
+import {
+  saveVaultBlob,
+  getVaultBlob,
+  hasVaultBlob,
+  deleteVaultBlob,
+} from './vaultStorage.js';
 
 export * from '../lib/forensics/provenanceRecorder.js';
 
@@ -85,6 +91,62 @@ const caseProvenanceStore = new Map<string, ProcessingEvent[]>();
 // In-memory evidence file blob storage for integrity re-checks: evidenceId -> (Blob | ArrayBuffer)
 const fileBlobStore = new Map<string, Blob | ArrayBuffer>();
 
+const EVIDENCE_STORAGE_KEY = 'veratrace_evidence_records_v1';
+const PROVENANCE_STORAGE_KEY = 'veratrace_provenance_records_v1';
+
+function loadPersistedEvidence(): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    const raw = window.localStorage.getItem(EVIDENCE_STORAGE_KEY);
+    if (raw) {
+      const records: EvidenceRecord[] = JSON.parse(raw);
+      for (const rec of records) {
+        if (!caseEvidenceStore.has(rec.caseId)) {
+          caseEvidenceStore.set(rec.caseId, new Map());
+        }
+        caseEvidenceStore.get(rec.caseId)!.set(rec.evidenceId, Object.freeze(rec));
+      }
+    }
+    const rawProv = window.localStorage.getItem(PROVENANCE_STORAGE_KEY);
+    if (rawProv) {
+      const events: Array<{ caseId: string; event: ProcessingEvent }> = JSON.parse(rawProv);
+      for (const item of events) {
+        if (!caseProvenanceStore.has(item.caseId)) {
+          caseProvenanceStore.set(item.caseId, []);
+        }
+        caseProvenanceStore.get(item.caseId)!.push(Object.freeze(item.event));
+      }
+    }
+  } catch {
+    // Ignore corrupt storage
+  }
+}
+
+function persistEvidence(): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    const allRecords: EvidenceRecord[] = [];
+    for (const map of caseEvidenceStore.values()) {
+      for (const rec of map.values()) {
+        allRecords.push(rec);
+      }
+    }
+    window.localStorage.setItem(EVIDENCE_STORAGE_KEY, JSON.stringify(allRecords));
+
+    const allProv: Array<{ caseId: string; event: ProcessingEvent }> = [];
+    for (const [caseId, events] of caseProvenanceStore.entries()) {
+      for (const ev of events) {
+        allProv.push({ caseId, event: ev });
+      }
+    }
+    window.localStorage.setItem(PROVENANCE_STORAGE_KEY, JSON.stringify(allProv));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+loadPersistedEvidence();
+
 // Evidence change listeners: caseId -> Set<listener>
 type EvidenceListener = () => void;
 const evidenceListeners = new Map<string, Set<EvidenceListener>>();
@@ -117,6 +179,16 @@ function notifyEvidenceSubscribers(caseId: string): void {
       }
     }
   }
+  const wildcard = evidenceListeners.get('*');
+  if (wildcard) {
+    for (const listener of wildcard) {
+      try {
+        listener();
+      } catch (err) {
+        console.error('Error in wildcard evidence listener:', err);
+      }
+    }
+  }
 }
 
 /**
@@ -132,6 +204,7 @@ export function syncEvidenceRecord(caseId: string, record: EvidenceRecord): void
     caseEvidenceStore.set(normCaseId, caseMap);
   }
   caseMap.set(record.evidenceId, Object.freeze({ ...record }));
+  persistEvidence();
   notifyEvidenceSubscribers(normCaseId);
 }
 
@@ -216,25 +289,81 @@ export function getProvenanceEventsForEvidence(evidenceId: string): ProcessingEv
 export function clearEvidenceForCase(caseId: string): void {
   if (!caseId) return;
   const normCaseId = caseId.trim();
+  const caseMap = caseEvidenceStore.get(normCaseId);
+  if (caseMap) {
+    for (const evId of caseMap.keys()) {
+      fileBlobStore.delete(evId);
+      deleteVaultBlob(evId).catch(() => {});
+    }
+  }
   caseEvidenceStore.delete(normCaseId);
   caseProvenanceStore.delete(normCaseId);
+  persistEvidence();
   notifyEvidenceSubscribers(normCaseId);
 }
 
 /**
- * Stores raw evidence bytes/blob in memory for subsequent integrity verification.
+ * Deletes a single evidence record and its associated vault blob.
  */
-export function storeEvidenceBlob(evidenceId: string, blob: Blob | ArrayBuffer): void {
-  if (!evidenceId) return;
-  fileBlobStore.set(evidenceId.trim(), blob);
+export function deleteEvidenceRecord(caseId: string, evidenceId: string): void {
+  if (!caseId || !evidenceId) return;
+  const normCaseId = caseId.trim();
+  const normEvId = evidenceId.trim();
+  const caseMap = caseEvidenceStore.get(normCaseId);
+  if (caseMap && caseMap.has(normEvId)) {
+    caseMap.delete(normEvId);
+    fileBlobStore.delete(normEvId);
+    deleteVaultBlob(normEvId).catch(() => {});
+    persistEvidence();
+    notifyEvidenceSubscribers(normCaseId);
+  }
 }
 
 /**
- * Retrieves raw evidence bytes/blob if available.
+ * Stores raw evidence bytes/blob in memory and persists to IndexedDB vault.
+ */
+export function storeEvidenceBlob(evidenceId: string, blob: Blob | ArrayBuffer): void {
+  if (!evidenceId) return;
+  const normId = evidenceId.trim();
+  fileBlobStore.set(normId, blob);
+  saveVaultBlob(normId, blob).catch((err) => {
+    console.warn('Failed to persist blob to vault:', err);
+  });
+}
+
+/**
+ * Retrieves raw evidence bytes/blob synchronously from in-memory cache if available.
  */
 export function getEvidenceBlob(evidenceId: string): Blob | ArrayBuffer | null {
   if (!evidenceId) return null;
   return fileBlobStore.get(evidenceId.trim()) || null;
+}
+
+/**
+ * Retrieves raw evidence bytes/blob asynchronously from memory cache or IndexedDB vault.
+ */
+export async function getEvidenceBlobAsync(evidenceId: string): Promise<Blob | ArrayBuffer | null> {
+  if (!evidenceId) return null;
+  const normId = evidenceId.trim();
+  const cached = fileBlobStore.get(normId);
+  if (cached) return cached;
+
+  const vaultBlob = await getVaultBlob(normId);
+  if (vaultBlob) {
+    fileBlobStore.set(normId, vaultBlob);
+    return vaultBlob;
+  }
+  return null;
+}
+
+/**
+ * Checks whether the binary payload for an evidence item exists in memory or IndexedDB vault.
+ */
+export async function checkEvidenceFileAvailable(evidenceId: string): Promise<boolean> {
+  if (!evidenceId) return false;
+  const normId = evidenceId.trim();
+  if (fileBlobStore.has(normId)) return true;
+  return hasVaultBlob(normId);
 }
 
 /**
@@ -255,6 +384,7 @@ export function updateEvidenceVerificationStatus(
         verificationStatus: status,
       });
       caseMap.set(normId, updated);
+      persistEvidence();
       notifyEvidenceSubscribers(caseId);
       return updated;
     }
@@ -466,9 +596,13 @@ export async function processEvidenceFile(
     }),
   });
 
-  // Store raw blob for future verification re-checks
-  if (file instanceof Blob || file instanceof ArrayBuffer) {
-    fileBlobStore.set(evidenceId, file);
+  // Store raw bytes for subsequent integrity verification and dossier export
+  const rawPayload = file instanceof Blob || file instanceof ArrayBuffer ? file : fullArrayBuffer;
+  fileBlobStore.set(evidenceId, rawPayload);
+  try {
+    await saveVaultBlob(evidenceId, rawPayload);
+  } catch (vaultErr) {
+    console.warn('Failed to persist evidence file to IndexedDB vault:', vaultErr);
   }
 
   // Register in evidence store
@@ -497,6 +631,8 @@ export async function processEvidenceFile(
 
 /**
  * Re-checks the cryptographic integrity of an evidence record against its reference SHA-256 hash.
+ * If raw bytes are stored in memory or vault, recalculates the SHA-256 and compares it.
+ * If raw bytes cannot be recovered, marks VerificationStatus.ERROR and records failure provenance.
  */
 export async function recheckEvidenceIntegrity(evidenceId: string): Promise<VerificationStatusType> {
   const record = getEvidenceById(evidenceId);
@@ -504,7 +640,16 @@ export async function recheckEvidenceIntegrity(evidenceId: string): Promise<Veri
     throw new ForensicsError(`Evidence with ID ${evidenceId} not found.`, 'ERR_EVIDENCE_NOT_FOUND');
   }
 
-  const storedBlob = fileBlobStore.get(evidenceId);
+  // Check memory store, then fallback to IndexedDB vault
+  let storedBlob = fileBlobStore.get(evidenceId);
+  if (!storedBlob) {
+    const fromVault = await getVaultBlob(evidenceId);
+    if (fromVault) {
+      storedBlob = fromVault;
+      fileBlobStore.set(evidenceId, fromVault);
+    }
+  }
+
   let newStatus: VerificationStatusType;
 
   if (storedBlob) {
@@ -517,15 +662,20 @@ export async function recheckEvidenceIntegrity(evidenceId: string): Promise<Veri
       newStatus = VerificationStatus.MISMATCH;
     }
   } else {
-    // When raw bytes are not cached in memory (e.g. initial mock evidence records),
-    // verify format of sha256 hash (64 hex characters) and preserve or advance state
-    const isHex64 = /^[0-9a-f]{64}$/i.test(record.sha256);
-    if (!isHex64) {
-      newStatus = VerificationStatus.ERROR;
-    } else if (record.verificationStatus === VerificationStatus.MISMATCH) {
-      newStatus = VerificationStatus.MISMATCH;
+    // If the record is initial mock seed data where raw binary was not staged:
+    if (evidenceId.startsWith('ev_mock_')) {
+      const isHex64 = /^[0-9a-f]{64}$/i.test(record.sha256);
+      if (!isHex64) {
+        newStatus = VerificationStatus.ERROR;
+      } else if (record.verificationStatus === VerificationStatus.MISMATCH) {
+        newStatus = VerificationStatus.MISMATCH;
+      } else {
+        newStatus = VerificationStatus.MATCH;
+      }
     } else {
-      newStatus = VerificationStatus.MATCH;
+      // Real evidence whose raw binary cannot be recovered from memory or local vault:
+      // Never silently substitute metadata placeholders or claim MATCH!
+      newStatus = VerificationStatus.ERROR;
     }
   }
 
@@ -541,6 +691,7 @@ export async function recheckEvidenceIntegrity(evidenceId: string): Promise<Veri
     details: JSON.stringify({
       status: newStatus,
       sha256: record.sha256,
+      payloadRecovered: storedBlob !== undefined && storedBlob !== null,
     }),
   });
 

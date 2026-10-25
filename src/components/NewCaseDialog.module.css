@@ -1,0 +1,132 @@
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  background: rgba(20, 28, 51, 0.38);
+  backdrop-filter: blur(1px);
+}
+
+.dialog {
+  position: fixed;
+  z-index: 150;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(540px, calc(100vw - 2 * var(--space-5)));
+  max-height: calc(100vh - 2 * var(--space-6));
+  overflow-y: auto;
+  padding: var(--space-6);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-2);
+}
+
+.title {
+  font-size: var(--text-lg);
+  margin: 0;
+  color: var(--text-strong);
+}
+
+.close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.close:hover {
+  background: var(--sand-200);
+  color: var(--text-strong);
+}
+.close svg {
+  width: 18px;
+  height: 18px;
+}
+
+.intro {
+  margin: 0 0 var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.field {
+  margin-bottom: var(--space-5);
+}
+
+.label {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-strong);
+  margin-bottom: var(--space-2);
+}
+
+.req {
+  color: var(--alert-fg);
+  font-weight: 600;
+}
+
+.input,
+.textarea,
+.select {
+  width: 100%;
+  padding: 10px 14px;
+  font-family: inherit;
+  font-size: var(--text-base);
+  color: var(--text-strong);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.input:focus-visible,
+.textarea:focus-visible,
+.select:focus-visible {
+  outline: none;
+  border-color: var(--accent-500);
+  box-shadow: 0 0 0 3px var(--accent-100);
+}
+
+.textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.errorInput {
+  border-color: var(--alert-border);
+}
+
+.errorText {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs);
+  color: var(--alert-fg);
+}
+
+.hint {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+}
