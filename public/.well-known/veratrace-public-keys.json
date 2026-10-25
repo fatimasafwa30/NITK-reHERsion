@@ -1,0 +1,15 @@
+{
+  "$schema": "https://veratrace.org/schemas/v1/public-keyset.json",
+  "publishedAtUtc": "2026-10-25T10:00:00Z",
+  "jurisdiction": "IN_BSA_2023",
+  "integrationSeam": {
+    "status": "PENDING_KEY_CEREMONY",
+    "blocker": "Production Ed25519 platform keys must be provisioned via an authenticated Key Management Service (AWS KMS / HashiCorp Vault / Cloud KMS) or offline ceremony managed by Person 3 (Backend/DevOps). No deployable production private key exists in this frontend repository. Fabricating production trust keys in source control is prohibited by VeraTrace cryptographic policy.",
+    "keyLifecycleRules": {
+      "active": "Current valid signing key for new dossiers (annual rotation).",
+      "deprecated": "Previous annual key; remains valid for historical dossiers signed during its active window.",
+      "revoked": "Compromised key; verifiers reject any manifest signed by this key regardless of export date."
+    }
+  },
+  "keys": []
+}

@@ -48,6 +48,70 @@
   transition: border-color var(--dur) var(--ease), background-color var(--dur) var(--ease);
 }
 .dropzone:hover { border-color: var(--accent-500); background: var(--accent-50); }
+.dropzoneActive { border-color: var(--accent-600) !important; background: var(--accent-100) !important; }
+
+/* ---- Alert banner ---- */
+.alertBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--alert-bg);
+  border: 1px solid var(--alert-border);
+  color: var(--alert-fg);
+  font-size: var(--text-sm);
+}
+
+.alertIcon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.alertText {
+  flex: 1;
+  margin: 0;
+  font-weight: 500;
+}
+
+.alertClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--alert-fg);
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+.alertClose:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+.alertClose svg {
+  width: 16px;
+  height: 16px;
+}
+
+.subNote {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-weight: normal;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 
 .dropIcon {
   display: inline-flex;

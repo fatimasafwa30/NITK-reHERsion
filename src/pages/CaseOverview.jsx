@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Plus, FolderOpen, FileText, CircleHelp, ArrowRight, CalendarPlus, FileDown } from 'lucide-react';
 import Button from '../components/Button';
@@ -8,6 +8,7 @@ import AddEventDialog from '../components/AddEventDialog';
 import { useCase } from '../hooks/useCase';
 import { useEvidenceForCase } from '../hooks/useEvidenceForCase';
 import { useTimelineForCase } from '../hooks/useTimelineForCase';
+import { addTimelineEventForCase, subscribeTimeline } from '../services/timelineService';
 import styles from './CaseOverview.module.css';
 
 function formatWhen(iso) {
@@ -32,8 +33,17 @@ export default function CaseOverview({ onAddEvidence, onAddTimelineEvent }) {
   const { data: timelineFromStore } = useTimelineForCase(caseId);
 
   const [dialogOpen, setDialogOpen] = useState(false);
-  // Events added in this session only — nothing is persisted yet.
+  // Events added in this session only — synced with timelineService
   const [localEvents, setLocalEvents] = useState([]);
+  const [, setTimelineTick] = useState(0);
+
+  // Subscribe to live timeline state updates
+  useEffect(() => {
+    if (!caseId) return undefined;
+    return subscribeTimeline(caseId, () => {
+      setTimelineTick((t) => t + 1);
+    });
+  }, [caseId]);
 
   if (!caseRecord) {
     return (
@@ -46,10 +56,21 @@ export default function CaseOverview({ onAddEvidence, onAddTimelineEvent }) {
     );
   }
 
-  const timeline = [...timelineFromStore, ...localEvents];
+  // Deduplicate between store timeline and local session events
+  const seenIds = new Set();
+  const timeline = [...timelineFromStore, ...localEvents].filter((e) => {
+    const key = e.eventId || `${e.label}_${e.occurredAt}`;
+    if (seenIds.has(key)) return false;
+    seenIds.add(key);
+    return true;
+  });
+
   const verifiedCount = evidence.filter((e) => e.verificationStatus === 'MATCH').length;
 
   function handleAddEvent(event) {
+    if (caseId) {
+      addTimelineEventForCase(caseId, event);
+    }
     setLocalEvents((prev) => [...prev, event]);
     onAddTimelineEvent?.(event);
   }
@@ -147,7 +168,13 @@ export default function CaseOverview({ onAddEvidence, onAddTimelineEvent }) {
             <div className={styles.panel}>
               <h2 className={styles.panelTitle}>Actions</h2>
               <div className={styles.actionStack}>
-                <Button variant="ghost" full iconLeft={<Plus />} onClick={onAddEvidence}>
+                <Button
+                  to={onAddEvidence ? undefined : `/case/${caseId}/evidence`}
+                  variant="ghost"
+                  full
+                  iconLeft={<Plus />}
+                  onClick={onAddEvidence}
+                >
                   Add evidence
                 </Button>
                 <Button to={`/case/${caseId}/dossier`} variant="ghost" full iconLeft={<FileDown />}>

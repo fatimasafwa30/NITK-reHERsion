@@ -1,13 +1,19 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   ArrowLeft, UploadCloud, Search, Copy, Check, X, FileText, FolderOpen, Info,
+  AlertTriangle, Clock3,
 } from 'lucide-react';
 import Button from '../components/Button';
 import StatusChip from '../components/StatusChip';
 import EmptyState from '../components/EmptyState';
 import { useCase } from '../hooks/useCase';
 import { useEvidenceForCase } from '../hooks/useEvidenceForCase';
+import {
+  processEvidenceFile,
+  recheckEvidenceIntegrity,
+  subscribeEvidence,
+} from '../services/evidenceService';
 import styles from './EvidenceWorkspace.module.css';
 
 const FILTERS = [
@@ -68,6 +74,87 @@ export default function EvidenceWorkspace({ onAddEvidence }) {
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState(null);
 
+  const fileInputRef = useRef(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isRechecking, setIsRechecking] = useState(false);
+  const [, setRefreshTick] = useState(0);
+
+  // Subscribe to live evidence mutations for this case
+  useEffect(() => {
+    if (!caseId) return undefined;
+    return subscribeEvidence(caseId, () => {
+      setRefreshTick((t) => t + 1);
+    });
+  }, [caseId]);
+
+  async function handleFiles(files) {
+    if (!files || files.length === 0 || !caseId) return;
+    setUploadError(null);
+    setIsUploading(true);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        await processEvidenceFile(caseId, files[i]);
+      }
+    } catch (err) {
+      console.error('Evidence processing error:', err);
+      setUploadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  }
+
+  function handleChooseFiles() {
+    if (onAddEvidence) {
+      onAddEvidence();
+    } else {
+      fileInputRef.current?.click();
+    }
+  }
+
+  function onFileInputChange(e) {
+    if (e.target.files && e.target.files.length > 0) {
+      handleFiles(Array.from(e.target.files));
+    }
+  }
+
+  function handleDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }
+
+  function handleDragLeave(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }
+
+  function handleDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFiles(Array.from(e.dataTransfer.files));
+    }
+  }
+
+  async function handleRecheck(evidenceId) {
+    if (!evidenceId) return;
+    setIsRechecking(true);
+    try {
+      await recheckEvidenceIntegrity(evidenceId);
+    } catch (err) {
+      console.error('Integrity check failed:', err);
+    } finally {
+      setIsRechecking(false);
+    }
+  }
+
   if (!caseRecord) {
     return (
       <EmptyState
@@ -104,15 +191,61 @@ export default function EvidenceWorkspace({ onAddEvidence }) {
         created the file or when the incident happened.
       </p>
 
-      {/* Upload surface — visual only; hashing belongs to the evidence module. */}
-      <div className={styles.dropzone}>
-        <span className={styles.dropIcon} aria-hidden="true"><UploadCloud strokeWidth={1.6} /></span>
-        <div className={styles.dropCopy}>
-          <p className={styles.dropTitle}>Add evidence to this case</p>
-          <p className={styles.dropHint}>Screenshots, photos, PDFs or audio. Files stay on your device.</p>
+      {/* Upload failure / validation error alert */}
+      {uploadError && (
+        <div className={styles.alertBanner} role="alert">
+          <AlertTriangle className={styles.alertIcon} aria-hidden="true" strokeWidth={2} />
+          <p className={styles.alertText}>{uploadError}</p>
+          <button
+            type="button"
+            className={styles.alertClose}
+            onClick={() => setUploadError(null)}
+            aria-label="Dismiss error"
+          >
+            <X strokeWidth={2} />
+          </button>
         </div>
-        <Button iconLeft={<UploadCloud />} className={styles.dropBtn} onClick={onAddEvidence}>
-          Choose files
+      )}
+
+      {/* Hidden file input supporting multi-file selection */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        multiple
+        style={{ display: 'none' }}
+        onChange={onFileInputChange}
+        accept="image/png,image/jpeg,application/pdf,text/plain"
+        tabIndex={-1}
+        aria-hidden="true"
+      />
+
+      {/* Upload surface connected to forensic ingestion pipeline */}
+      <div
+        className={`${styles.dropzone} ${isDragging ? styles.dropzoneActive : ''}`}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        <span className={styles.dropIcon} aria-hidden="true">
+          {isUploading ? <Clock3 strokeWidth={1.6} className={styles.spin} /> : <UploadCloud strokeWidth={1.6} />}
+        </span>
+        <div className={styles.dropCopy}>
+          <p className={styles.dropTitle}>
+            {isUploading ? 'Processing and verifying evidence…' : 'Add evidence to this case'}
+          </p>
+          <p className={styles.dropHint}>
+            {isUploading
+              ? 'Calculating SHA-256 digest and extracting metadata on device'
+              : 'Screenshots, photos, PDFs or text files. Files stay on your device.'}
+          </p>
+        </div>
+        <Button
+          iconLeft={<UploadCloud />}
+          className={styles.dropBtn}
+          onClick={handleChooseFiles}
+          disabled={isUploading}
+        >
+          {isUploading ? 'Processing…' : 'Choose files'}
         </Button>
       </div>
 
@@ -237,6 +370,33 @@ export default function EvidenceWorkspace({ onAddEvidence }) {
               <div><dt>Size</dt><dd>{formatBytes(selected.sizeBytes)}</dd></div>
               <div><dt>Recorded</dt><dd>{formatWhen(selected.recordedAt)}</dd></div>
               <div><dt>Evidence ID</dt><dd><code className={styles.hash}>{selected.evidenceId}</code></dd></div>
+              {selected.extractedMetadata?.extractedFileTimeUtc && (
+                <div>
+                  <dt>Embedded time</dt>
+                  <dd>
+                    {formatWhen(selected.extractedMetadata.extractedFileTimeUtc)}
+                    <span className={styles.subNote}>Device metadata (unverified)</span>
+                  </dd>
+                </div>
+              )}
+              {selected.extractedMetadata?.metadata && typeof selected.extractedMetadata.metadata === 'object' && (
+                <>
+                  {'pageCount' in selected.extractedMetadata.metadata && (
+                    <div>
+                      <dt>Pages</dt>
+                      <dd>{String(selected.extractedMetadata.metadata.pageCount)}</dd>
+                    </div>
+                  )}
+                  {'dimensions' in selected.extractedMetadata.metadata && (
+                    <div>
+                      <dt>Dimensions</dt>
+                      <dd>
+                        {`${selected.extractedMetadata.metadata.dimensions?.width} × ${selected.extractedMetadata.metadata.dimensions?.height}`}
+                      </dd>
+                    </div>
+                  )}
+                </>
+              )}
             </dl>
 
             <div className={styles.drawerHash}>
@@ -248,7 +408,14 @@ export default function EvidenceWorkspace({ onAddEvidence }) {
               "Recorded" is the time VeraTrace saw this file — not a verified incident time.
             </p>
 
-            <Button variant="ghost" full>Re-check this file</Button>
+            <Button
+              variant="ghost"
+              full
+              onClick={() => handleRecheck(selected.evidenceId)}
+              disabled={isRechecking}
+            >
+              {isRechecking ? 'Verifying SHA-256…' : 'Re-check this file'}
+            </Button>
           </aside>
         </>
       )}
