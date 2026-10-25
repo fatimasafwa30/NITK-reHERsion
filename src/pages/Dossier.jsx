@@ -23,6 +23,9 @@ import { TimelineTable } from '../components/Timeline';
 import { PatternAnalysis } from '../components/PatternAnalysis';
 import { useVera } from '../store/VeraStore';
 import { useToast } from '../store/ToastProvider';
+import { mockCases } from '../data/mockCases';
+import { getEvidenceForCase, checkEvidenceFileAvailable } from '../services/evidenceService';
+import { getTimelineForCase } from '../services/timelineService';
 import {
   CASE_STATUS_LABEL,
   VERIFICATION_LABEL,
@@ -32,7 +35,6 @@ import {
   hashBlocks,
 } from '../lib/format';
 import { exportDossierPdf, exportEvidenceZip } from '../services/caseStore';
-import { checkEvidenceFileAvailable } from '../services/evidenceService';
 import { isDemoCase } from '../data/demoCaseData';
 
 function Section({ title, number, children, breakBefore = false, id }) {
@@ -56,12 +58,40 @@ function Section({ title, number, children, breakBefore = false, id }) {
 
 export function Dossier() {
   const { caseId } = useParams();
-  const { getCase, getEvidence, getTimeline } = useVera();
-  const toast = useToast();
 
-  const record = getCase(caseId);
-  const evidence = getEvidence(caseId);
-  const events = getTimeline(caseId);
+  let vera = null;
+  try {
+    vera = useVera();
+  } catch {
+    vera = null;
+  }
+
+  let toast = () => {};
+  try {
+    toast = useToast();
+  } catch {
+    toast = () => {};
+  }
+
+  const record =
+    vera?.getCase(caseId) ||
+    mockCases.find((c) => c.caseId === caseId) ||
+    (caseId ? { caseId, title: 'Case Record', status: 'OPEN', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), summary: '' } : null);
+
+  const evidenceFromStore = vera?.getEvidence(caseId) || [];
+  const serviceEvidence = caseId ? getEvidenceForCase(caseId) : [];
+  const evidence = evidenceFromStore.length > 0 ? evidenceFromStore : serviceEvidence;
+
+  const timelineFromStore = vera?.getTimeline(caseId) || [];
+  const serviceTimeline = caseId ? getTimelineForCase(caseId) : [];
+  const allEvents = [...timelineFromStore, ...serviceTimeline];
+  const seenEvents = new Set();
+  const events = allEvents.filter((e) => {
+    const key = e.eventId || `${e.label}_${e.occurredAt}`;
+    if (seenEvents.has(key)) return false;
+    seenEvents.add(key);
+    return true;
+  });
 
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [isDownloadingZip, setIsDownloadingZip] = useState(false);
@@ -96,6 +126,14 @@ export function Dossier() {
     () => Object.fromEntries(evidence.map((item) => [item.evidenceId, item])),
     [evidence],
   );
+
+  const stats = useMemo(() => {
+    const totalBytes = evidence.reduce((sum, item) => sum + (item.sizeBytes || 0), 0);
+    const verifiedCount = evidence.filter((item) => item.verificationStatus === 'MATCH').length;
+    const changedCount = evidence.filter((item) => item.verificationStatus === 'CHANGED').length;
+    const unverifiedCount = evidence.length - verifiedCount - changedCount;
+    return { totalBytes, verifiedCount, changedCount, unverifiedCount };
+  }, [evidence]);
 
   if (!record) {
     return (
@@ -266,177 +304,163 @@ export function Dossier() {
         </Link>
         <ArrowRight className="size-3 text-lilac shrink-0" aria-hidden="true" />
         <span className="rounded border border-violet-deep/30 bg-paper px-2 py-0.5 font-semibold text-violet-deep shadow-xs">
-          4. Export Dossier (Active)
+          4. Export Dossier
         </span>
       </div>
 
-      {/* Actions, and only the actions, disappear on paper. */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-lilac pb-8" data-print="hide">
-        <Button
-          variant="primary"
-          onClick={handleDownloadPdf}
-          disabled={isDownloadingPdf}
-        >
-          {isDownloadingPdf ? (
-            <Clock aria-hidden="true" className="size-4 animate-spin" />
-          ) : (
-            <FileDown aria-hidden="true" strokeWidth={1.5} className="size-4" />
-          )}
-          {isDownloadingPdf ? 'Compiling PDF…' : 'Export Dossier (Download PDF)'}
-        </Button>
-        <Button
-          variant="secondary"
-          onClick={handleDownloadZip}
-          disabled={isDownloadingZip}
-        >
-          {isDownloadingZip ? (
-            <Clock aria-hidden="true" className="size-4 animate-spin" />
-          ) : (
-            <Layers aria-hidden="true" strokeWidth={1.5} className="size-4" />
-          )}
-          {isDownloadingZip ? 'Packaging ZIP…' : 'Download evidence ZIP'}
-        </Button>
-        <Button variant="ghost" onClick={() => window.print()}>
-          <Printer aria-hidden="true" strokeWidth={1.5} className="size-4" />
-          Print / Save as PDF
-        </Button>
-        <Button variant="ghost" onClick={downloadIntegrityReport}>
-          <Download aria-hidden="true" strokeWidth={1.5} className="size-4" />
-          Integrity report (.json)
-        </Button>
-        <Button to={`/case/${caseId}/analysis`} variant="ghost">
-          <Activity aria-hidden="true" strokeWidth={1.5} className="size-4" />
-          Pattern & Risk Graph
-        </Button>
-      </div>
-
-      {downloadNotice && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="mt-4 flex items-center gap-2 rounded-md border border-violet/30 bg-wash/60 px-4 py-3 text-sm text-plum"
-          data-print="hide"
-        >
-          <CheckCircle2 className="size-4 shrink-0 text-violet-deep" aria-hidden="true" />
-          <span>{downloadNotice}</span>
+      {missingCount > 0 && (
+        <div className="mb-6 rounded-md border border-amber-300 bg-amber-50/70 p-4 text-xs text-amber-900" data-print="hide">
+          <div className="flex items-center gap-2 font-semibold">
+            <AlertTriangle className="size-4 text-amber-600 shrink-0" />
+            <span>Vault Storage Notice: {missingCount} file(s) unavailable in browser storage</span>
+          </div>
+          <p className="mt-1 text-amber-800 leading-relaxed">
+            Some binary file payloads are missing from local IndexedDB vault storage. Their cryptographic hashes and timeline records remain preserved and verifiable.
+          </p>
         </div>
       )}
 
-      {/* Storage Warning Banner when some original binaries cannot be recovered */}
-      {missingCount > 0 && (
-        <aside
-          className="mt-6 flex gap-3 rounded-md border border-amber-300 bg-amber-50/70 p-4 text-amber-900"
-          role="alert"
-          data-print="hide"
-        >
-          <AlertTriangle className="size-5 shrink-0 text-amber-600" aria-hidden="true" strokeWidth={2} />
-          <div className="text-sm leading-relaxed">
-            <p className="font-semibold text-amber-950">
-              Storage Alert: {missingCount} of {evidence.length} evidence file(s) unavailable in local vault
-            </p>
-            <p className="mt-1 text-xs">
-              Original binary files for unrecovered items are not present in this browser's local vault storage (e.g. initial demo cases or cleared cache).
-              The generated PDF and signed manifest document their records and SHA-256 hashes, but missing files will <strong>not</strong> be bundled into the evidence ZIP.
-            </p>
-          </div>
-        </aside>
+      {downloadNotice && (
+        <div className="mb-6 rounded-md border border-violet/30 bg-wash/80 p-3 text-xs text-violet-deep flex items-center justify-between" data-print="hide">
+          <span>{downloadNotice}</span>
+          <button onClick={() => setDownloadNotice(null)} className="text-xs font-semibold hover:underline">Dismiss</button>
+        </div>
       )}
 
-      <article className="pt-10">
-        {/* ── Cover block */}
-        <header data-print="section">
-          <p className="mono text-[0.625rem] tracking-[0.16em] text-muted uppercase">
-            VeraTrace · Case dossier
-          </p>
-          <h1 className="display-lg mt-6 max-w-[30ch] text-plum print-ink">{record.title}</h1>
+      {/* Dossier Header and Actions Bar */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between" data-print="hide">
+        <div>
+          <p className="eyebrow">Case dossier</p>
+          <h1 className="display-lg mt-2 text-plum">{record.title}</h1>
+        </div>
 
-          <dl className="mono mt-8 grid gap-x-8 gap-y-2.5 text-[0.6875rem] sm:grid-cols-2">
-            <div className="flex justify-between gap-4 border-b border-lilac/70 pb-2">
-              <dt className="text-muted">Case ID</dt>
-              <dd className="text-plum print-ink">{record.caseId}</dd>
-            </div>
-            <div className="flex justify-between gap-4 border-b border-lilac/70 pb-2">
-              <dt className="text-muted">Status</dt>
-              <dd className="text-plum print-ink">{CASE_STATUS_LABEL[record.status] || record.status}</dd>
-            </div>
-            <div className="flex justify-between gap-4 border-b border-lilac/70 pb-2">
-              <dt className="text-muted">Opened</dt>
-              <dd className="text-plum print-ink">{formatStamp(record.createdAt)}</dd>
-            </div>
-            <div className="flex justify-between gap-4 border-b border-lilac/70 pb-2">
-              <dt className="text-muted">Last updated</dt>
-              <dd className="text-plum print-ink">{formatStamp(record.updatedAt)}</dd>
-            </div>
-            <div className="flex justify-between gap-4 border-b border-lilac/70 pb-2">
-              <dt className="text-muted">Sealed files</dt>
-              <dd className="text-plum print-ink">{evidence.length}</dd>
-            </div>
-            <div className="flex justify-between gap-4 border-b border-lilac/70 pb-2">
-              <dt className="text-muted">Prepared</dt>
-              <dd className="text-plum print-ink">{formatStamp(preparedAt)}</dd>
-            </div>
-          </dl>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="primary"
+            onClick={handleDownloadPdf}
+            disabled={isDownloadingPdf}
+          >
+            {isDownloadingPdf ? (
+              <Clock aria-hidden="true" className="size-4 animate-spin" />
+            ) : (
+              <FileDown aria-hidden="true" strokeWidth={1.5} className="size-4" />
+            )}
+            {isDownloadingPdf ? 'Compiling PDF…' : 'Download PDF'}
+          </Button>
+
+          <Button
+            variant="secondary"
+            onClick={handleDownloadZip}
+            disabled={isDownloadingZip}
+          >
+            {isDownloadingZip ? (
+              <Clock aria-hidden="true" className="size-4 animate-spin" />
+            ) : (
+              <Layers aria-hidden="true" strokeWidth={1.5} className="size-4" />
+            )}
+            {isDownloadingZip ? 'Packaging ZIP…' : 'Download evidence ZIP'}
+          </Button>
+
+          <Tooltip label="Opens your browser's print dialog. Choose 'Save as PDF' if you prefer a print-style layout.">
+            <Button
+              variant="outline"
+              onClick={() => window.print()}
+              aria-label="Print or save as PDF"
+              className="border-lilac text-plum hover:border-violet"
+            >
+              <Printer aria-hidden="true" strokeWidth={1.5} className="size-4" />
+              Print
+            </Button>
+          </Tooltip>
+        </div>
+      </div>
+
+      <hr className="rule my-8" data-print="hide" />
+
+      {/* The printable document begins here. */}
+      <article className="print-sheet">
+        <header className="border-b-2 border-plum pb-6 print-ink">
+          <p className="eyebrow">Case dossier</p>
+          <h2 className="display-lg mt-2 text-plum print-ink">{record.title}</h2>
+          <div className="mono mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+            <span>Case {record.caseId}</span>
+            <span aria-hidden="true">·</span>
+            <span>Status: {CASE_STATUS_LABEL[record.status] || record.status}</span>
+            <span aria-hidden="true">·</span>
+            <span>Prepared {formatStamp(preparedAt)}</span>
+          </div>
         </header>
 
         {/* ── 1 · Summary */}
-        <Section number="01" title="Case summary">
-          <p className="max-w-prose text-[0.9375rem] leading-relaxed text-plum print-ink">
-            {record.summary || 'No summary has been written for this case.'}
-          </p>
-          <p className="mt-4 max-w-prose text-[0.8125rem] leading-relaxed text-muted">
-            This dossier contains {evidence.length} sealed {evidence.length === 1 ? 'file' : 'files'} and{' '}
-            {events.length} timeline {events.length === 1 ? 'event' : 'events'}
-            {uncertain ? `, of which ${uncertain} ${uncertain === 1 ? 'has' : 'have'} an uncertain date` : ''}. It
-            was prepared by the person holding the record, not by an investigator.
-          </p>
+        <Section number="01" title="Case particulars">
+          {record.summary ? (
+            <p className="max-w-prose text-sm leading-relaxed text-plum print-ink">{record.summary}</p>
+          ) : (
+            <p className="text-sm italic text-muted">No summary was provided when the case was opened.</p>
+          )}
+
+          <dl className="mono mt-6 grid grid-cols-2 gap-4 border-t border-lilac pt-4 text-xs sm:grid-cols-4">
+            <div>
+              <dt className="text-muted">Sealed files</dt>
+              <dd className="mt-1 text-sm font-medium text-plum print-ink">{evidence.length}</dd>
+            </div>
+            <div>
+              <dt className="text-muted">Total size</dt>
+              <dd className="mt-1 text-sm font-medium text-plum print-ink">{formatBytes(stats.totalBytes)}</dd>
+            </div>
+            <div>
+              <dt className="text-muted">Timeline events</dt>
+              <dd className="mt-1 text-sm font-medium text-plum print-ink">{events.length}</dd>
+            </div>
+            <div>
+              <dt className="text-muted">Uncertain dates</dt>
+              <dd className="mt-1 text-sm font-medium text-plum print-ink">{uncertain}</dd>
+            </div>
+          </dl>
         </Section>
 
-        {/* ── 2 · Timeline */}
-        <Section number="02" title="Timeline of events">
-          {events.length ? (
-            <TimelineTable events={events} evidenceById={evidenceById} />
-          ) : (
-            <p className="text-sm text-muted">No events have been recorded for this case.</p>
-          )}
+        {/* ── 2 · Verification summary */}
+        <Section number="02" title="Integrity and verification status">
+          <p className="max-w-prose text-sm leading-relaxed text-plum print-ink">
+            A file in this dossier is verified only when its contents have been read again and compared to the
+            SHA-256 hash recorded when it was added. If it has not been re-checked, it is listed as unverified.
+          </p>
+
+          <dl className="mono mt-6 grid grid-cols-3 gap-4 border-t border-lilac pt-4 text-xs">
+            <div>
+              <dt className="text-muted">Matching</dt>
+              <dd className="mt-1 text-base font-medium text-plum print-ink">{stats.verifiedCount}</dd>
+            </div>
+            <div>
+              <dt className="text-muted">Changed</dt>
+              <dd className="mt-1 text-base font-medium text-plum print-ink">{stats.changedCount}</dd>
+            </div>
+            <div>
+              <dt className="text-muted">Unverified</dt>
+              <dd className="mt-1 text-base font-medium text-plum print-ink">{stats.unverifiedCount}</dd>
+            </div>
+          </dl>
         </Section>
 
         {/* ── 3 · Pattern Analysis */}
         <Section number="03" title="Cross-platform harassment pattern analysis">
+          <p className="max-w-prose text-sm leading-relaxed text-plum print-ink mb-6">
+            Multi-platform behavioral correlation, escalation risk evaluation, and account cross-referencing.
+          </p>
           <PatternAnalysis caseRecord={record} evidence={evidence} timeline={events} />
         </Section>
 
-        {/* ── 4 · Evidence index */}
-        <Section number="04" title="Evidence index">
-          {evidence.length ? (
-            <ol className="space-y-5">
-              {evidence.map((item, index) => (
-                <li
-                  key={item.evidenceId}
-                  className="grid gap-x-6 gap-y-1 border-b border-lilac/70 pb-5 sm:grid-cols-[2rem_1fr]"
-                  data-print="section"
-                >
-                  <span className="mono text-[0.6875rem] text-muted">
-                    {String(index + 1).padStart(2, '0')}
-                  </span>
-                  <div className="min-w-0">
-                    <p className="break-words text-sm font-medium text-plum print-ink">{item.fileName}</p>
-                    <p className="mono mt-1.5 text-[0.6875rem] leading-relaxed text-muted">
-                      {item.evidenceId} · {fileKind(item.mimeType, item.fileName)} ·{' '}
-                      {formatBytes(item.sizeBytes)} · recorded {formatStamp(item.recordedAt)} ·{' '}
-                      {VERIFICATION_LABEL[item.verificationStatus] || item.verificationStatus}
-                      {missingIds.has(item.evidenceId) ? ' · [Payload missing from vault]' : ' · [In vault]'}
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ol>
+        {/* ── 4 · Forensic Timeline */}
+        <Section number="04" title="Timeline of events">
+          {events.length ? (
+            <TimelineTable events={events} evidenceById={evidenceById} />
           ) : (
-            <p className="text-sm text-muted">No files have been sealed in this case.</p>
+            <p className="text-sm text-muted">No timeline entries have been recorded.</p>
           )}
         </Section>
 
-        {/* ── 4 · Integrity table */}
-        <Section number="04" title="Integrity table" breakBefore>
+        {/* ── 5 · Cryptographic Ledger */}
+        <Section number="05" title="Evidence index" breakBefore>
           {evidence.length ? (
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left">
@@ -447,6 +471,9 @@ export function Dossier() {
                   <tr className="border-b border-lilac">
                     <th scope="col" className="eyebrow py-2 pr-4 font-semibold">
                       Evidence ID
+                    </th>
+                    <th scope="col" className="eyebrow py-2 pr-4 font-semibold">
+                      File
                     </th>
                     <th scope="col" className="eyebrow py-2 font-semibold">
                       SHA-256
@@ -461,6 +488,9 @@ export function Dossier() {
                     <tr key={item.evidenceId} className="border-b border-lilac/70 align-top">
                       <td className="mono py-3 pr-4 text-[0.6875rem] whitespace-nowrap text-plum print-ink">
                         {item.evidenceId}
+                      </td>
+                      <td className="py-3 pr-4 text-xs font-medium text-plum print-ink">
+                        {item.fileName}
                       </td>
                       <td className="mono py-3 text-[0.6875rem] leading-relaxed break-all text-plum print-ink">
                         <span className="sr-only">{item.sha256}</span>
@@ -477,28 +507,6 @@ export function Dossier() {
           ) : (
             <p className="text-sm text-muted">There are no hashes to list.</p>
           )}
-        </Section>
-
-        {/* ── 5 · Honest limits */}
-        <Section number="05" title="What this record does and does not show">
-          <div className="max-w-prose space-y-4 text-[0.9375rem] leading-relaxed text-plum print-ink">
-            <p>
-              Each hash above was computed from the bytes of the file at the moment it was added to this case. If a
-              file still produces the same hash, it has not changed since then. That is the whole of what a
-              matching hash establishes.
-            </p>
-            <p>
-              It does not show who created a file, where it came from, or that the events described in it happened
-              as described. The &ldquo;recorded&rdquo; times are the times this application saved each record; they
-              are not independently witnessed, and they are not the times of the incidents themselves. Timeline
-              entries marked <span className="mono text-[0.8125rem]">date uncertain</span> are the record-holder&rsquo;s
-              best recollection and are labelled as such deliberately.
-            </p>
-            <p>
-              Whether any of this is accepted as evidence is decided by courts, employers, platforms and police,
-              not by this document. Anyone relying on it should seek advice from someone qualified to give it.
-            </p>
-          </div>
         </Section>
 
         {/* ── 6 · BSA Section 63 Certificate */}
@@ -568,6 +576,28 @@ export function Dossier() {
           </div>
         </Section>
 
+        {/* ── 8 · Honest limits */}
+        <Section number="08" title="What this record does and does not show">
+          <div className="max-w-prose space-y-4 text-[0.9375rem] leading-relaxed text-plum print-ink">
+            <p>
+              Each hash above was computed from the bytes of the file at the moment it was added to this case. If a
+              file still produces the same hash, it has not changed since then. That is the whole of what a
+              matching hash establishes.
+            </p>
+            <p>
+              It does not show who created a file, where it came from, or that the events described in it happened
+              as described. The &ldquo;recorded&rdquo; times are the times this application saved each record; they
+              are not independently witnessed, and they are not the times of the incidents themselves. Timeline
+              entries marked <span className="mono text-[0.8125rem]">date uncertain</span> are the record-holder&rsquo;s
+              best recollection and are labelled as such deliberately.
+            </p>
+            <p>
+              Whether any of this is accepted as evidence is decided by courts, employers, platforms and police,
+              not by this document. Anyone relying on it should seek advice from someone qualified to give it.
+            </p>
+          </div>
+        </Section>
+
         <footer className="mt-14 border-t border-lilac pt-6" data-print="section">
           <p className="mono text-[0.625rem] leading-relaxed tracking-[0.1em] text-muted uppercase">
             VeraTrace · {record.caseId} · prepared {formatStamp(preparedAt)} · demonstration build
@@ -607,7 +637,7 @@ export function Dossier() {
             {isDownloadingZip ? 'Packaging ZIP…' : 'Download evidence ZIP'}
           </Button>
           <Button to={`/case/${caseId}/analysis`} variant="ghost">
-            <Activity aria-hidden="true" strokeWidth={1.5} className="size-4" />
+            <Activity aria-hidden="true" strokeWidth={1.5} className="size-3.5" />
             Review Pattern Analysis
           </Button>
         </div>
@@ -618,7 +648,7 @@ export function Dossier() {
           to={`/case/${record.caseId}`}
           className="inline-flex min-h-11 items-center text-[0.8125rem] text-violet-deep underline decoration-lilac decoration-1 underline-offset-4 hover:decoration-violet"
         >
-          Back to the case
+          Back to case overview
         </Link>
       </div>
     </div>

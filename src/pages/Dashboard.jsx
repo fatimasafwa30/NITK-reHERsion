@@ -68,70 +68,56 @@ export function Dashboard() {
         </div>
       </header>
 
-      {/* One quiet line of figures, set like a caption rather than a dashboard. */}
-      <dl className="mono mt-10 flex flex-wrap items-baseline gap-x-3 gap-y-2 text-[0.8125rem] text-muted">
-        <div className="flex items-baseline gap-2">
-          <dt className="sr-only">Cases</dt>
-          <dd className="text-plum">{stats.cases}</dd>
-          <span>{stats.cases === 1 ? 'case' : 'cases'}</span>
+      {/* Metrics strip */}
+      <section aria-label="Case metrics" className="mt-10 grid grid-cols-2 gap-4 sm:grid-cols-3">
+        <div className="rounded-lg border border-lilac bg-paper p-5 shadow-sheet">
+          <p className="eyebrow">Active cases</p>
+          <p className="display-lg mt-2 text-plum">{stats.cases}</p>
         </div>
-        <span aria-hidden="true" className="text-lilac">
-          /
-        </span>
-        <div className="flex items-baseline gap-2">
-          <dt className="sr-only">Sealed files</dt>
-          <dd className="text-plum">{stats.files}</dd>
-          <span>sealed {stats.files === 1 ? 'file' : 'files'}</span>
+        <div className="rounded-lg border border-lilac bg-paper p-5 shadow-sheet">
+          <p className="eyebrow">Sealed files</p>
+          <p className="display-lg mt-2 text-plum">{stats.files}</p>
         </div>
-        <span aria-hidden="true" className="text-lilac">
-          /
-        </span>
-        <div className="flex items-baseline gap-2">
-          <dt className="sr-only">Last activity</dt>
-          <dd className="text-plum">{stats.latest ? relativeDay(stats.latest) : '—'}</dd>
-          <span>last activity</span>
+        <div className="col-span-2 rounded-lg border border-lilac bg-paper p-5 shadow-sheet sm:col-span-1">
+          <p className="eyebrow">Last updated</p>
+          <p className="mono mt-3 text-sm text-plum">
+            {stats.latest ? relativeDay(stats.latest) : '—'}
+          </p>
         </div>
-      </dl>
+      </section>
 
-      <hr className="rule mt-8" />
-
-      <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+      {/* Filter and search bar */}
+      <div className="mt-12 flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative flex-1">
           <Search
             aria-hidden="true"
-            strokeWidth={1.5}
             className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
           />
           <Input
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search cases"
-            aria-label="Search cases by title or summary"
+            placeholder="Search by case title or notes…"
             className="pl-9"
           />
         </div>
-        <div className="relative sm:w-52">
-          <SlidersHorizontal
-            aria-hidden="true"
-            strokeWidth={1.5}
-            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
-          />
+        <div className="flex items-center gap-2">
+          <SlidersHorizontal aria-hidden="true" className="size-4 text-muted sm:hidden" />
           <Select
             value={status}
             onChange={(event) => setStatus(event.target.value)}
             aria-label="Filter cases by status"
-            className="pl-9"
+            className="w-full sm:w-48"
           >
-            <option value="ALL">All statuses</option>
+            <option value="ALL">All cases</option>
             <option value="OPEN">Open</option>
-            <option value="IN_PROGRESS">In progress</option>
-            <option value="CLOSED">Closed</option>
+            <option value="PRESERVED">Preserved</option>
+            <option value="ARCHIVED">Archived</option>
           </Select>
         </div>
       </div>
 
-      <p role="status" aria-live="polite" className="sr-only">
+      <p className="mono mt-3 text-xs text-muted" aria-live="polite">
         {filtering ? `${filtered.length} of ${cases.length} cases shown.` : ''}
       </p>
 

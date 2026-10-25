@@ -92,6 +92,5 @@ export function ToastProvider({ children }) {
 
 export function useToast() {
   const ctx = useContext(ToastContext);
-  if (!ctx) return () => {};
-  return ctx.toast;
+  return ctx?.toast || (() => {});
 }

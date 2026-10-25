@@ -7,7 +7,7 @@ import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './styles/app.css';
 
-import App from './App';
+import { App } from './App';
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

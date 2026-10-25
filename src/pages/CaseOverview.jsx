@@ -11,14 +11,39 @@ import { PatternAnalysis } from '../components/PatternAnalysis';
 import { useVera } from '../store/VeraStore';
 import { formatDate, relativeDay } from '../lib/format';
 import { isDemoCase } from '../data/demoCaseData';
+import { mockCases } from '../data/mockCases';
+import { getEvidenceForCase } from '../services/evidenceService';
+import { getTimelineForCase } from '../services/timelineService';
 
-export function CaseOverview() {
+export function CaseOverview({ onAddEvidence, onAddTimelineEvent } = {}) {
   const { caseId } = useParams();
-  const { getCase, getEvidence, getTimeline } = useVera();
 
-  const record = getCase(caseId);
-  const evidence = getEvidence(caseId);
-  const events = getTimeline(caseId);
+  let vera = null;
+  try {
+    vera = useVera();
+  } catch {
+    vera = null;
+  }
+
+  const record =
+    vera?.getCase(caseId) ||
+    mockCases.find((c) => c.caseId === caseId) ||
+    (caseId ? { caseId, title: 'Case Record', status: 'OPEN', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), summary: '' } : null);
+
+  const evidenceFromStore = vera?.getEvidence(caseId) || [];
+  const serviceEvidence = caseId ? getEvidenceForCase(caseId) : [];
+  const evidence = evidenceFromStore.length > 0 ? evidenceFromStore : serviceEvidence;
+
+  const timelineFromStore = vera?.getTimeline(caseId) || [];
+  const serviceTimeline = caseId ? getTimelineForCase(caseId) : [];
+  const allEvents = [...timelineFromStore, ...serviceTimeline];
+  const seen = new Set();
+  const events = allEvents.filter((e) => {
+    const key = e.eventId || `${e.label}_${e.occurredAt}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 
   const [eventOpen, setEventOpen] = useState(false);
   const [activeEvidenceId, setActiveEvidenceId] = useState(null);
@@ -159,7 +184,11 @@ export function CaseOverview() {
               </dl>
 
               <div className="mt-6 flex flex-col gap-2.5">
-                <Button to={`/case/${record.caseId}/evidence`} variant="primary">
+                <Button
+                  to={`/case/${record.caseId}/evidence`}
+                  variant="primary"
+                  onClick={onAddEvidence}
+                >
                   <Plus aria-hidden="true" strokeWidth={1.5} className="size-4" />
                   Add evidence
                 </Button>
@@ -178,35 +207,37 @@ export function CaseOverview() {
                   <FileDown aria-hidden="true" strokeWidth={1.5} className="size-4" />
                   Generate Evidence Dossier
                 </Button>
-                <Button variant="ghost" onClick={() => setEventOpen(true)}>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setEventOpen(true);
+                    onAddTimelineEvent?.();
+                  }}
+                >
                   <Clock3 aria-hidden="true" strokeWidth={1.5} className="size-4" />
                   Add timeline event
                 </Button>
               </div>
             </div>
 
-            {evidence.length ? (
-              <div className="mt-6">
-                <p className="eyebrow">Recently sealed</p>
-                <div className="mt-4 space-y-3">
-                  {evidence.slice(0, 2).map((item) => (
-                    <EvidenceSheet
-                      key={item.evidenceId}
-                      record={item}
-                      highlighted={activeEvidenceId === item.evidenceId}
-                    />
-                  ))}
-                </div>
-                {evidence.length > 2 ? (
-                  <Link
-                    to={`/case/${record.caseId}/evidence`}
-                    className="mt-4 inline-flex min-h-11 items-center text-[0.8125rem] text-violet-deep underline decoration-lilac decoration-1 underline-offset-4 hover:decoration-violet"
-                  >
-                    See all {evidence.length} files
-                  </Link>
-                ) : null}
+            {/* Evidence roll. */}
+            <div className="mt-6 rounded-lg border border-lilac bg-paper p-5 shadow-sheet sm:p-6">
+              <div className="flex items-baseline justify-between gap-3">
+                <p className="eyebrow">Sealed evidence</p>
+                <span className="mono text-xs text-muted">{evidence.length}</span>
               </div>
-            ) : null}
+              {evidence.length ? (
+                <ul className="mt-4 space-y-3">
+                  {evidence.map((item) => (
+                    <li key={item.evidenceId}>
+                      <EvidenceSheet record={item} />
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-4 text-[0.8125rem] text-muted">No files sealed yet.</p>
+              )}
+            </div>
           </div>
         </aside>
 
@@ -254,7 +285,15 @@ export function CaseOverview() {
                   In the order things happened, as far as is known.
                 </p>
               </div>
-              <Button variant="secondary" size="sm" onClick={() => setEventOpen(true)} className="shrink-0">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setEventOpen(true);
+                  onAddTimelineEvent?.();
+                }}
+                className="shrink-0"
+              >
                 <Plus aria-hidden="true" strokeWidth={1.5} className="size-3.5" />
                 Add event
               </Button>
@@ -277,7 +316,13 @@ export function CaseOverview() {
                 icon={Clock3}
                 title="The timeline is empty"
                 action={
-                  <Button variant="primary" onClick={() => setEventOpen(true)}>
+                  <Button
+                    variant="primary"
+                    onClick={() => {
+                      setEventOpen(true);
+                      onAddTimelineEvent?.();
+                    }}
+                  >
                     <Plus aria-hidden="true" strokeWidth={1.5} className="size-4" />
                     Add the first event
                   </Button>

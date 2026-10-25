@@ -134,7 +134,19 @@ export function AppShell() {
                   )
                 }
               >
-                Verify
+                {({ isActive }) => (
+                  <>
+                    Verify
+                    {isActive ? (
+                      <motion.span
+                        layoutId="vt-nav-underline"
+                        aria-hidden="true"
+                        className="absolute inset-x-3 -bottom-[13px] h-[2px] rounded-full bg-violet-deep"
+                        transition={{ duration: 0.2, ease: EASE.out }}
+                      />
+                    ) : null}
+                  </>
+                )}
               </NavLink>
             )}
           </nav>
@@ -283,3 +295,5 @@ export function AppShell() {
     </div>
   );
 }
+
+export default AppShell;

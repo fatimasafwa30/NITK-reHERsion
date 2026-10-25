@@ -29,6 +29,7 @@ import {
 
 const VeraStoreContext = createContext(null);
 
+/** Events are ordered chronologically; undated ones sit at the end. */
 function sortEvents(events) {
   return [...events].sort((a, b) => {
     if (!a.occurredAt && !b.occurredAt) return 0;

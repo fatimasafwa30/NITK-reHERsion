@@ -99,19 +99,20 @@ export function NewCaseDialog({ open, onOpenChange, onClose, onSubmit }) {
                 setTitle(event.target.value);
                 if (error) setError('');
               }}
-              placeholder="Workplace harassment — messages & emails"
+              placeholder="e.g. Unwanted messages — October 2026"
               autoFocus
             />
           )}
         </Field>
 
-        <Field label="Short summary" hint="Optional">
+        <Field label="Summary" hint="Optional">
           {(props) => (
             <Textarea
               {...props}
               value={summary}
               onChange={(event) => setSummary(event.target.value)}
-              placeholder="What is happening, in a sentence or two."
+              placeholder="A few sentences to help you or an advocate remember what this case covers."
+              rows={3}
             />
           )}
         </Field>
@@ -119,9 +120,9 @@ export function NewCaseDialog({ open, onOpenChange, onClose, onSubmit }) {
         <Field label="Status">
           {(props) => (
             <Select {...props} value={status} onChange={(event) => setStatus(event.target.value)}>
-              <option value="OPEN">Open</option>
-              <option value="IN_PROGRESS">In progress</option>
-              <option value="CLOSED">Closed</option>
+              <option value="OPEN">Open — still adding evidence</option>
+              <option value="PRESERVED">Preserved — sealed for the record</option>
+              <option value="ARCHIVED">Archived — inactive</option>
             </Select>
           )}
         </Field>

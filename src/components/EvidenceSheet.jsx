@@ -35,7 +35,6 @@ export function EvidenceSheet({
           changed ? 'bg-alert/55' : verified ? 'bg-violet-deep' : 'bg-lilac',
         )}
       />
-
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3 min-w-0">
           {record.previewUrl && record.mimeType?.startsWith('image/') ? (

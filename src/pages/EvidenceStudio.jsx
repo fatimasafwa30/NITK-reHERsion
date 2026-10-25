@@ -51,25 +51,15 @@ function Detail({ record, caseId, onClose, onRemove }) {
   return (
     <div>
       <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="mono text-[0.625rem] tracking-[0.14em] text-muted">
-            {fileKind(record.mimeType, record.fileName)}
+        <div>
+          <p className="mono text-[0.625rem] font-medium tracking-[0.14em] text-muted">
+            {fileKind(record.mimeType)}
           </p>
-          <h2 className="display-md mt-1.5 break-words text-plum">{record.fileName}</h2>
+          <h2 className="mt-1 text-base font-medium text-plum" title={record.fileName}>
+            {record.fileName}
+          </h2>
+          <p className="mono mt-1 text-xs text-muted">{record.evidenceId}</p>
         </div>
-        {onClose ? (
-          <button
-            type="button"
-            onClick={onClose}
-            className="-mr-2 -mt-1 grid size-11 shrink-0 place-items-center rounded-md text-muted transition-colors hover:bg-wash hover:text-plum"
-            aria-label="Close details"
-          >
-            <X aria-hidden="true" strokeWidth={1.5} className="size-[18px]" />
-          </button>
-        ) : null}
-      </div>
-
-      <div className="mt-5">
         <VerificationMark status={record.verificationStatus} />
       </div>
 
@@ -102,75 +92,90 @@ function Detail({ record, caseId, onClose, onRemove }) {
       <hr className="rule my-5" />
 
       <dl className="mono space-y-3 text-[0.6875rem]">
-        <div className="flex items-baseline justify-between gap-4">
-          <dt className="text-muted">Evidence ID</dt>
-          <dd className="text-plum">{record.evidenceId}</dd>
+        <div>
+          <dt className="text-muted">Recorded</dt>
+          <dd className="mt-0.5 text-plum">{formatDateTime(record.recordedAt)}</dd>
         </div>
-        <div className="flex items-baseline justify-between gap-4">
-          <dt className="text-muted">Type</dt>
-          <dd className="text-plum">{record.mimeType}</dd>
-        </div>
-        <div className="flex items-baseline justify-between gap-4">
+        <div>
           <dt className="text-muted">Size</dt>
-          <dd className="text-plum">{formatBytes(record.sizeBytes)}</dd>
+          <dd className="mt-0.5 text-plum">{formatBytes(record.sizeBytes)}</dd>
         </div>
-        <div className="flex items-baseline justify-between gap-4">
-          <dt className="shrink-0 text-muted">Recorded</dt>
-          <dd className="text-right text-plum">{formatDateTime(record.recordedAt)}</dd>
+        <div>
+          <dt className="text-muted">MIME type</dt>
+          <dd className="mt-0.5 text-plum">{record.mimeType}</dd>
         </div>
       </dl>
 
-      <p className="mt-3 text-xs leading-relaxed text-muted">
-        &ldquo;Recorded&rdquo; is the time VeraTrace added the file. It is not a verified time for the events inside
-        it.
-      </p>
-
       <hr className="rule my-5" />
 
-      <div className="flex items-end justify-between gap-3">
-        <p className="eyebrow text-[0.625rem]">SHA-256</p>
-        <CopyButton value={record.sha256} what="SHA-256 hash" />
-      </div>
-      <div className="mt-2 rounded-md border border-lilac bg-wash/45 px-3 py-3">
-        <HashDisplay hash={record.sha256} />
-      </div>
-
-      {result ? (
-        <div className="mt-5">
-          <HashComparison
-            expected={record.sha256}
-            actual={result.sha256}
-            actualLabel="The file you chose"
-            fileName={result.fileName}
-          />
+      <div>
+        <div className="flex items-center justify-between">
+          <p className="eyebrow">Recorded hash</p>
+          <CopyButton value={record.sha256} label="Copy SHA-256" />
         </div>
-      ) : null}
+        <HashDisplay sha256={record.sha256} className="mt-2" />
+      </div>
 
-      <div className="mt-6 flex flex-wrap gap-2">
-        <Button variant="secondary" onClick={() => inputRef.current?.click()} disabled={checking}>
-          <FileSearch aria-hidden="true" strokeWidth={1.5} className="size-4" />
-          {checking ? 'Checking…' : result ? 'Check again' : 'Re-verify this file'}
-        </Button>
-        <Button variant="danger" onClick={() => onRemove(record)}>
-          <Trash aria-hidden="true" strokeWidth={1.5} className="size-4" />
-          Remove
-        </Button>
+      <div className="mt-6 rounded-md border border-lilac bg-wash/50 p-4">
+        <p className="text-xs font-medium text-plum">Re-verify this file</p>
+        <p className="mt-1 text-xs leading-relaxed text-muted">
+          Pick the file from your computer again to recompute its hash and verify it has not changed.
+        </p>
+
         <input
           ref={inputRef}
           type="file"
           className="sr-only"
-          aria-label={`Choose a copy of ${record.fileName} to re-verify`}
           onChange={(event) => {
             const file = event.target.files?.[0];
-            event.target.value = '';
             if (file) reverify(file);
+            event.target.value = '';
           }}
         />
+
+        <div className="mt-3 flex items-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={checking}
+            onClick={() => inputRef.current?.click()}
+          >
+            {checking ? 'Hashing…' : 'Check a file'}
+          </Button>
+          {record.verificationStatus !== 'UNVERIFIED' && (
+            <button
+              type="button"
+              onClick={() => setVerificationStatus(caseId, record.evidenceId, 'UNVERIFIED')}
+              className="text-xs text-muted hover:text-plum"
+            >
+              Reset to unverified
+            </button>
+          )}
+        </div>
+
+        {result && (
+          <HashComparison
+            className="mt-4"
+            expected={record.sha256}
+            actual={result.sha256}
+            actualFileName={result.fileName}
+          />
+        )}
       </div>
 
-      <p role="status" aria-live="polite" className="sr-only">
-        {checking ? 'Checking the file against the recorded hash.' : ''}
-      </p>
+      <div className="mt-8 flex items-center justify-between border-t border-lilac pt-4">
+        <button
+          type="button"
+          onClick={onRemove}
+          className="inline-flex items-center gap-1.5 text-xs text-muted transition-colors hover:text-alert"
+        >
+          <Trash aria-hidden="true" strokeWidth={1.5} className="size-3.5" />
+          Remove from case
+        </button>
+        <Button variant="secondary" size="sm" onClick={onClose}>
+          Close
+        </Button>
+      </div>
     </div>
   );
 }
@@ -184,24 +189,41 @@ export function EvidenceStudio() {
   const record = getCase(caseId);
   const evidence = getEvidence(caseId);
 
-  const [selectedId, setSelectedId] = useState(null);
   const [query, setQuery] = useState('');
-  const [status, setStatus] = useState('ALL');
-  const [pendingRemoval, setPendingRemoval] = useState(null);
+  const [kindFilter, setKindFilter] = useState('ALL');
+  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [selectedId, setSelectedId] = useState(null);
+  const [confirmRemoveId, setConfirmRemoveId] = useState(null);
   const [sealedId, setSealedId] = useState(null);
 
-  const selected = evidence.find((item) => item.evidenceId === selectedId) || null;
+  const selected = useMemo(
+    () => evidence.find((item) => item.evidenceId === selectedId) || null,
+    [evidence, selectedId],
+  );
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return evidence
-      .filter((item) => (status === 'ALL' ? true : item.verificationStatus === status))
+      .filter((item) => {
+        if (kindFilter === 'ALL') return true;
+        return fileKind(item.mimeType) === kindFilter;
+      })
+      .filter((item) => {
+        if (statusFilter === 'ALL') return true;
+        return item.verificationStatus === statusFilter;
+      })
       .filter((item) =>
-        needle ? `${item.fileName} ${item.evidenceId} ${item.sha256}`.toLowerCase().includes(needle) : true,
-      );
-  }, [evidence, query, status]);
+        needle
+          ? `${item.fileName} ${item.evidenceId}`.toLowerCase().includes(needle)
+          : true,
+      )
+      .sort((a, b) => new Date(b.recordedAt) - new Date(a.recordedAt));
+  }, [evidence, kindFilter, query, statusFilter]);
 
-  const filtering = Boolean(query.trim()) || status !== 'ALL';
+  const kinds = useMemo(() => {
+    const set = new Set(evidence.map((item) => fileKind(item.mimeType)));
+    return Array.from(set);
+  }, [evidence]);
 
   if (!record) {
     return (
@@ -223,6 +245,16 @@ export function EvidenceStudio() {
     await addEvidence(caseId, evidenceRecord, file);
     setSealedId(evidenceRecord.evidenceId);
     toast('File sealed', { detail: `${evidenceRecord.fileName} is now on the record.` });
+  };
+
+  const handleRemove = (evidenceId) => {
+    const item = evidence.find((e) => e.evidenceId === evidenceId);
+    removeEvidence(caseId, evidenceId);
+    if (selectedId === evidenceId) setSelectedId(null);
+    setConfirmRemoveId(null);
+    toast('File removed from case', {
+      detail: item ? item.fileName : undefined,
+    });
   };
 
   return (
@@ -280,22 +312,23 @@ export function EvidenceStudio() {
       <header className="max-w-2xl">
         <p className="eyebrow">Evidence</p>
         <h1 className="display-lg mt-4 text-plum">
-          Add a file, and it is <em className="italic">sealed</em> in place.
+          Seal files to compute and preserve their cryptographic hash.
         </h1>
-        <p className="mt-5 text-[0.9375rem] leading-relaxed text-muted">
-          Hashing happens in this browser, over the real bytes of the file. The original is never modified and
-          nothing is sent anywhere.
+        <p className="mt-4 text-sm leading-relaxed text-muted">
+          Drag in screenshots, chat exports, recordings, or PDFs. Every file is hashed with SHA-256 before being
+          saved to private browser storage. Files never leave your device.
         </p>
       </header>
 
-      {/* The dropzone is the focal point of this page, not a strip at the edge. */}
-      <Dropzone className="mt-10" onSealed={onSealed} />
+      <section aria-label="Drop files to seal" className="mt-10">
+        <Dropzone onSealed={onSealed} />
+      </section>
 
-      <div className="mt-16">
-        <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+      <section aria-label="Sealed files" className="mt-14">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h2 className="display-md text-plum">Sealed files</h2>
-            <p className="mono mt-2 text-[0.6875rem] text-muted">
+            <h2 className="display-md text-plum">Sealed in this case</h2>
+            <p className="mono mt-1 text-xs text-muted">
               {evidence.length} {evidence.length === 1 ? 'record' : 'records'} in {record.caseId}
             </p>
           </div>
@@ -313,172 +346,129 @@ export function EvidenceStudio() {
         </div>
 
         {evidence.length ? (
-          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="relative flex-1">
-              <Search
-                aria-hidden="true"
-                strokeWidth={1.5}
-                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
-              />
-              <Input
-                type="search"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search by file name, ID or hash"
-                aria-label="Search sealed files"
-                className="pl-9"
-              />
-            </div>
-            <div className="relative sm:w-56">
-              <SlidersHorizontal
-                aria-hidden="true"
-                strokeWidth={1.5}
-                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
-              />
-              <Select
-                value={status}
-                onChange={(event) => setStatus(event.target.value)}
-                aria-label="Filter sealed files by verification state"
-                className="pl-9"
-              >
-                <option value="ALL">All states</option>
-                <option value="UNVERIFIED">Not re-verified</option>
-                <option value="MATCH">Unchanged</option>
-                <option value="MISMATCH">Changed</option>
-                <option value="ERROR">Check failed</option>
-              </Select>
-            </div>
-          </div>
-        ) : null}
-
-        <p role="status" aria-live="polite" className="sr-only">
-          {filtering ? `${filtered.length} of ${evidence.length} files shown.` : ''}
-        </p>
-
-        <div className="mt-8 grid gap-8 lg:grid-cols-12">
-          <div className="lg:col-span-7">
-            {filtered.length ? (
-              <ul className="space-y-4">
-                {filtered.map((item) => (
-                  <li key={item.evidenceId}>
-                    <EvidenceSheet
-                      record={item}
-                      selected={selectedId === item.evidenceId}
-                      drawSeal={sealedId === item.evidenceId}
-                      onSelect={() => setSelectedId(item.evidenceId)}
-                      actions={
-                        <>
-                          <CopyButton value={item.sha256} what="SHA-256 hash" />
-                          <Tooltip label="Remove this record">
-                            <button
-                              type="button"
-                              onClick={() => setPendingRemoval(item)}
-                              className="grid size-11 place-items-center rounded-sm text-muted transition-colors hover:bg-alert-wash hover:text-alert sm:size-9"
-                              aria-label={`Remove ${item.fileName}`}
-                            >
-                              <Trash aria-hidden="true" strokeWidth={1.5} className="size-4" />
-                            </button>
-                          </Tooltip>
-                        </>
-                      }
-                    />
-                  </li>
-                ))}
-              </ul>
-            ) : evidence.length ? (
-              <EmptyState
-                align="left"
-                icon={Files}
-                title="No files match that"
-                action={
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      setQuery('');
-                      setStatus('ALL');
-                    }}
-                  >
-                    Clear search and filter
-                  </Button>
-                }
-              >
-                <p>
-                  Nothing in this case matches <span className="text-plum">{query.trim() || 'that filter'}</span>.
-                </p>
-              </EmptyState>
-            ) : (
-              <EmptyState align="left" icon={Files} title="Nothing sealed yet">
-                <p>
-                  Drop a file above, or choose one from your device. A screenshot or a short recording is a fine
-                  place to start.
-                </p>
-              </EmptyState>
-            )}
-          </div>
-
-          {/* Detail pane on a wide screen; the same content in a dialog on a phone. */}
-          <aside className="hidden lg:col-span-5 lg:block">
-            <div className="sticky top-24 rounded-lg border border-lilac bg-paper p-6 shadow-sheet">
-              {selected ? (
-                <Detail
-                  record={selected}
-                  caseId={caseId}
-                  onClose={() => setSelectedId(null)}
-                  onRemove={setPendingRemoval}
+          <>
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="relative flex-1">
+                <Search
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted"
                 />
-              ) : (
-                <div className="py-6 text-center">
-                  <Files aria-hidden="true" strokeWidth={1.25} className="mx-auto size-6 text-violet" />
-                  <h2 className="display-md mt-4 text-plum">Select a file</h2>
-                  <p className="mx-auto mt-2 max-w-xs text-sm leading-relaxed text-muted">
-                    Choose a sealed record to see its full hash, re-verify it against a copy on your device, or
-                    remove it.
+                <Input
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search by file name or ID…"
+                  className="pl-9"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal aria-hidden="true" className="size-4 text-muted sm:hidden" />
+                <Select
+                  value={kindFilter}
+                  onChange={(event) => setKindFilter(event.target.value)}
+                  aria-label="Filter by file type"
+                  className="w-full sm:w-40"
+                >
+                  <option value="ALL">All file types</option>
+                  {kinds.map((k) => (
+                    <option key={k} value={k}>
+                      {k}
+                    </option>
+                  ))}
+                </Select>
+
+                <Select
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value)}
+                  aria-label="Filter by verification status"
+                  className="w-full sm:w-44"
+                >
+                  <option value="ALL">All statuses</option>
+                  <option value="MATCH">Matching</option>
+                  <option value="MISMATCH">Changed</option>
+                  <option value="UNVERIFIED">Unverified</option>
+                </Select>
+              </div>
+            </div>
+
+            <div className="mt-8 grid gap-8 lg:grid-cols-12">
+              <div className={selected && isDesktop ? 'lg:col-span-7' : 'lg:col-span-12'}>
+                <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-2">
+                  {filtered.map((item) => (
+                    <li key={item.evidenceId}>
+                      <EvidenceSheet
+                        record={item}
+                        drawSeal={item.evidenceId === sealedId}
+                        isSelected={item.evidenceId === selectedId}
+                        onClick={() => setSelectedId(item.evidenceId)}
+                      />
+                    </li>
+                  ))}
+                </ul>
+                {!filtered.length && (
+                  <p className="mono py-12 text-center text-xs text-muted">
+                    No files match that search and filter.
                   </p>
-                </div>
+                )}
+              </div>
+
+              {isDesktop && selected && (
+                <aside className="lg:col-span-5">
+                  <div className="sticky top-24 rounded-lg border border-lilac bg-paper p-6 shadow-sheet">
+                    <Detail
+                      record={selected}
+                      caseId={caseId}
+                      onClose={() => setSelectedId(null)}
+                      onRemove={() => setConfirmRemoveId(selected.evidenceId)}
+                    />
+                  </div>
+                </aside>
               )}
             </div>
-          </aside>
-        </div>
-      </div>
+          </>
+        ) : (
+          <EmptyState
+            className="mt-8"
+            align="left"
+            icon={Files}
+            title="No files sealed yet"
+          >
+            <p>
+              Drop a file above to compute its SHA-256 hash and add it to the case.
+            </p>
+          </EmptyState>
+        )}
+      </section>
 
-      {!isDesktop && selected ? (
+      {/* Mobile detail sheet inside a dialog. */}
+      {!isDesktop && (
         <Dialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setSelectedId(null);
-          }}
-          title="Evidence record"
-          size="lg"
+          open={Boolean(selected)}
+          onOpenChange={(open) => !open && setSelectedId(null)}
+          title="Evidence detail"
+          description={selected ? selected.fileName : ''}
         >
-          <Detail record={selected} caseId={caseId} onRemove={setPendingRemoval} />
+          {selected && (
+            <Detail
+              record={selected}
+              caseId={caseId}
+              onClose={() => setSelectedId(null)}
+              onRemove={() => setConfirmRemoveId(selected.evidenceId)}
+            />
+          )}
         </Dialog>
-      ) : null}
+      )}
 
       <ConfirmDialog
-        open={Boolean(pendingRemoval)}
-        onOpenChange={(open) => {
-          if (!open) setPendingRemoval(null);
-        }}
-        title="Remove this record?"
-        description="The record and its hash are removed from this case. Your original file on your device is untouched."
-        confirmLabel="Remove record"
-        onConfirm={() => {
-          const target = pendingRemoval;
-          if (!target) return;
-          removeEvidence(caseId, target.evidenceId);
-          if (selectedId === target.evidenceId) setSelectedId(null);
-          toast('Record removed', { detail: `${target.fileName} is no longer in this case.` });
-          setPendingRemoval(null);
-        }}
-      >
-        {pendingRemoval ? (
-          <p className="mono text-xs leading-relaxed text-muted">
-            <span className="text-plum">{pendingRemoval.fileName}</span>
-            <br />
-            {pendingRemoval.evidenceId}
-          </p>
-        ) : null}
-      </ConfirmDialog>
+        open={Boolean(confirmRemoveId)}
+        onOpenChange={(open) => !open && setConfirmRemoveId(null)}
+        title="Remove this file from the case?"
+        description="The record and its SHA-256 hash will be deleted from browser storage. The original file on your computer is not touched."
+        confirmLabel="Remove file"
+        destructive
+        onConfirm={() => confirmRemoveId && handleRemove(confirmRemoveId)}
+      />
     </div>
   );
 }

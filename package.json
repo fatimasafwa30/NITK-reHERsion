@@ -1,13 +1,13 @@
 {
-  "name": "veratrace-frontend",
+  "name": "veratrace",
   "version": "0.1.0",
-  "description": "VeraTrace — frontend design system, landing page, dashboard and case UI (Person 1 module)",
+  "description": "VeraTrace — evidence preservation and timestamped records. Vite + React + Tailwind v4.",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
+    "preview": "vite preview --port 5176",
     "test": "vitest run"
   },
   "dependencies": {
