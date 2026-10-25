@@ -86,13 +86,14 @@ export function EvidenceSheet({
   );
 
   const surface = cn(
-    'relative overflow-hidden rounded-lg border bg-sheet pl-5 pr-4 py-4 text-left shadow-sheet transition-[border-color,box-shadow,background-color] duration-200 ease-[var(--ease-out-soft)]',
+    'relative overflow-hidden rounded-lg border bg-sheet pl-5 pr-4 py-4 text-left shadow-sheet transition-[border-color,background-color,transform] duration-[var(--dur-fast)] ease-[var(--ease-state)]',
     selected
       ? 'border-violet-deep bg-paper shadow-lift'
       : highlighted
         ? 'border-violet bg-paper'
         : 'border-lilac',
-    interactive && 'w-full cursor-pointer hover:border-violet hover:bg-paper hover:shadow-lift',
+    interactive &&
+      'w-full cursor-pointer hover:-translate-y-0.5 hover:border-violet hover:bg-paper focus-visible:border-violet',
     className,
   );
 

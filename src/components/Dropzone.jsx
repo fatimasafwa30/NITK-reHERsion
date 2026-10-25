@@ -4,6 +4,7 @@ import { FileUp, TriangleAlert, X } from 'lucide-react';
 import { cn } from '../lib/cn';
 import { MAX_FILE_BYTES, hashingAvailable, sha256File } from '../lib/hash';
 import { formatBytes, hashBlocks } from '../lib/format';
+import { DURATION, EASE, MS, stagger } from '../motion/tokens';
 import { Button } from './ui/Button';
 import { SealMark } from './SealMark';
 import { useToast } from '../store/ToastProvider';
@@ -79,11 +80,20 @@ export function Dropzone({ onSealed, disabled = false, className }) {
       // Sequential, so progress means something and a big file cannot starve
       // the UI of the others.
       for (const { id, file } of accepted) {
-        patch(id, { status: 'hashing', progress: 0 });
+        patch(id, { status: 'hashing', progress: 0, showIndicator: false });
+
+        // Anything that finishes inside 150ms never shows an indicator at all;
+        // a bar that appears and vanishes is noise, not feedback.
+        const indicatorTimer = setTimeout(
+          () => patch(id, { showIndicator: true }),
+          MS.indicatorDelay,
+        );
+
         try {
           // eslint-disable-next-line no-await-in-loop
           const sha256 = await sha256File(file, (ratio) => patch(id, { progress: ratio }));
-          patch(id, { status: 'sealed', progress: 1, sha256 });
+          clearTimeout(indicatorTimer);
+          patch(id, { status: 'sealed', progress: 1, sha256, showIndicator: false });
 
           seq += 1;
           onSealed?.({
@@ -97,7 +107,8 @@ export function Dropzone({ onSealed, disabled = false, className }) {
             verificationStatus: 'UNVERIFIED',
           });
         } catch (error) {
-          patch(id, { status: 'error', error: error.message || 'Hashing failed.' });
+          clearTimeout(indicatorTimer);
+          patch(id, { status: 'error', showIndicator: false, error: error.message || 'Hashing failed.' });
         }
       }
     },
@@ -137,7 +148,13 @@ export function Dropzone({ onSealed, disabled = false, className }) {
       >
         <SealMark size={34} className="mx-auto" />
         <h2 className="display-md mt-5 text-plum">
-          Drop files here to <em className="italic">seal</em> them
+          {dragging ? (
+            'Release to add'
+          ) : (
+            <>
+              Drop files here to <em className="italic">seal</em> them
+            </>
+          )}
         </h2>
         <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-muted">
           Each file is hashed with SHA-256 on this device. Nothing is uploaded, and the original file is never
@@ -182,13 +199,20 @@ export function Dropzone({ onSealed, disabled = false, className }) {
             exit={{ opacity: 0 }}
             className="mt-5 divide-y divide-lilac/80 overflow-hidden rounded-md border border-lilac bg-paper"
           >
-            {queue.map((item) => (
+            <AnimatePresence initial={false}>
+              {queue.map((item, index) => (
               <motion.li
                 key={item.id}
                 layout={!reduced}
                 initial={reduced ? false : { opacity: 0, y: -4 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="flex items-start gap-3 px-4 py-3"
+                exit={
+                  reduced
+                    ? { opacity: 0, transition: { duration: 0.1 } }
+                    : { opacity: 0, height: 0, transition: { duration: 0.15, ease: EASE.inOut } }
+                }
+                transition={{ duration: DURATION.base, delay: stagger(index), ease: EASE.out }}
+                className="flex items-start gap-3 overflow-hidden px-4 py-3"
               >
                 <span className="mt-0.5 shrink-0">
                   {item.status === 'sealed' ? (
@@ -200,13 +224,18 @@ export function Dropzone({ onSealed, disabled = false, className }) {
                       aria-hidden="true"
                       className={cn(
                         'block size-[18px] rounded-full border border-dashed border-violet',
-                        item.status === 'hashing' && 'motion-safe:animate-spin',
+                        item.status === 'hashing' && item.showIndicator && 'motion-safe:animate-spin',
                       )}
                     />
                   )}
                 </span>
 
-                <div className="min-w-0 flex-1">
+                <div
+                  className={cn(
+                    'min-w-0 flex-1',
+                    !reduced && (item.status === 'rejected' || item.status === 'error') && 'anim-shake',
+                  )}
+                >
                   <div className="flex flex-wrap items-baseline justify-between gap-x-3">
                     <p className="min-w-0 truncate text-sm font-medium text-plum">{item.file.name}</p>
                     <p
@@ -219,7 +248,7 @@ export function Dropzone({ onSealed, disabled = false, className }) {
                     </p>
                   </div>
 
-                  {item.status === 'hashing' ? (
+                  {item.status === 'hashing' && item.showIndicator ? (
                     <div className="mt-2 h-[3px] w-full overflow-hidden rounded-full bg-lilac/70">
                       <div
                         className="h-full rounded-full bg-violet-deep transition-[width] duration-150 ease-linear"
@@ -252,7 +281,8 @@ export function Dropzone({ onSealed, disabled = false, className }) {
                   <X aria-hidden="true" strokeWidth={1.5} className="size-4" />
                 </button>
               </motion.li>
-            ))}
+              ))}
+            </AnimatePresence>
           </motion.ul>
         ) : null}
       </AnimatePresence>

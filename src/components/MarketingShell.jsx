@@ -1,9 +1,13 @@
-import { Link, Outlet } from 'react-router-dom';
+import { Link, Outlet, useLocation } from 'react-router-dom';
+import { PageTransition } from '../motion/PageTransition';
+import { RouteChrome } from '../motion/RouteChrome';
 import { Logo } from './Logo';
 import { Footer } from './Footer';
 import { QuickExitButton } from './QuickExit';
 
 export function MarketingShell() {
+  const location = useLocation();
+
   return (
     <div className="flex min-h-dvh flex-col bg-ivory">
       <a
@@ -19,13 +23,13 @@ export function MarketingShell() {
           <div className="ml-auto flex items-center gap-1 sm:gap-3">
             <Link
               to="/verify"
-              className="hidden min-h-11 items-center rounded-md px-3 text-sm text-muted transition-colors hover:bg-wash/70 hover:text-plum sm:inline-flex"
+              className="hidden min-h-11 items-center rounded-md px-3 text-sm text-muted transition-colors duration-[var(--dur-fast)] hover:bg-wash/70 hover:text-plum sm:inline-flex"
             >
               Verify a file
             </Link>
             <Link
               to="/dashboard"
-              className="inline-flex min-h-11 items-center rounded-md px-3 text-sm text-muted transition-colors hover:bg-wash/70 hover:text-plum"
+              className="inline-flex min-h-11 items-center rounded-md px-3 text-sm text-muted transition-colors duration-[var(--dur-fast)] hover:bg-wash/70 hover:text-plum"
             >
               Cases
             </Link>
@@ -35,8 +39,12 @@ export function MarketingShell() {
       </header>
 
       <main id="main" className="flex-1">
-        <Outlet />
+        <PageTransition routeKey={location.pathname}>
+          <Outlet />
+        </PageTransition>
       </main>
+
+      <RouteChrome />
 
       <Footer />
     </div>

@@ -2,7 +2,7 @@ import { forwardRef, useId } from 'react';
 import { cn } from '../../lib/cn';
 
 const CONTROL =
-  'w-full min-h-11 rounded-md border border-lilac bg-paper px-3 py-2.5 text-sm text-plum placeholder:text-muted/70 transition-colors duration-150 hover:border-violet focus:border-violet-deep';
+  'w-full min-h-11 rounded-md border border-lilac bg-paper px-3 py-2.5 text-sm text-plum placeholder:text-muted/70 transition-colors duration-[var(--dur-fast)] ease-[var(--ease-state)] hover:border-violet focus:border-violet-deep';
 
 export function Label({ children, htmlFor, hint }) {
   return (

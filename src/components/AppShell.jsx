@@ -1,8 +1,11 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { motion } from 'motion/react';
 import { FilePlus, FolderClosed, ShieldQuestionMark } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { PageTransition } from '../motion/PageTransition';
+import { RouteChrome } from '../motion/RouteChrome';
+import { EASE } from '../motion/tokens';
 import { Logo } from './Logo';
 import { Footer } from './Footer';
 import { QuickExitButton } from './QuickExit';
@@ -19,8 +22,9 @@ const NAV = [
  */
 export function AppShell() {
   const location = useLocation();
-  const reduced = useReducedMotion();
   const [newCaseOpen, setNewCaseOpen] = useState(false);
+  // The dossier is a document; it fades in without moving.
+  const fadeOnly = location.pathname.endsWith('/dossier');
 
   return (
     <div className="flex min-h-dvh flex-col bg-ivory">
@@ -54,9 +58,11 @@ export function AppShell() {
                   <>
                     {item.label}
                     {isActive ? (
-                      <span
+                      <motion.span
+                        layoutId="vt-nav-underline"
                         aria-hidden="true"
                         className="absolute inset-x-3 -bottom-[13px] h-[2px] rounded-full bg-violet-deep"
+                        transition={{ duration: 0.2, ease: EASE.out }}
                       />
                     ) : null}
                   </>
@@ -80,18 +86,12 @@ export function AppShell() {
       </header>
 
       <main id="main" className="flex-1 pb-24 sm:pb-0">
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={location.pathname}
-            initial={reduced ? false : { opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={reduced ? undefined : { opacity: 0, y: -4 }}
-            transition={{ duration: 0.2, ease: [0.22, 0.61, 0.36, 1] }}
-          >
-            <Outlet />
-          </motion.div>
-        </AnimatePresence>
+        <PageTransition routeKey={location.pathname} fadeOnly={fadeOnly}>
+          <Outlet />
+        </PageTransition>
       </main>
+
+      <RouteChrome />
 
       <Footer />
 
@@ -108,13 +108,21 @@ export function AppShell() {
                 to={item.to}
                 className={({ isActive }) =>
                   cn(
-                    'flex min-h-14 flex-col items-center justify-center gap-1 pb-1 pt-2 text-[0.6875rem] font-medium transition-colors',
+                    'relative flex min-h-14 flex-col items-center justify-center gap-1 pb-1 pt-2 text-[0.6875rem] font-medium transition-colors duration-[var(--dur-fast)]',
                     isActive ? 'text-violet-deep' : 'text-muted',
                   )
                 }
               >
                 {({ isActive }) => (
                   <>
+                    {isActive ? (
+                      <motion.span
+                        layoutId="vt-tabbar-indicator"
+                        aria-hidden="true"
+                        className="absolute inset-x-5 top-0 h-[2px] rounded-full bg-violet-deep"
+                        transition={{ duration: 0.2, ease: EASE.out }}
+                      />
+                    ) : null}
                     <item.icon
                       aria-hidden="true"
                       strokeWidth={isActive ? 1.75 : 1.5}

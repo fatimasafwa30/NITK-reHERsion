@@ -93,11 +93,11 @@ export function HashDisplay({ hash, highlight, size = 'md', className, label = '
           return (
             <span
               key={`${block}-${index}`}
+              // Deliberately static. A digest must never move, fade or
+              // re-colour under the reader's eye.
               className={cn(
-                'rounded-xs px-1 py-0.5 transition-colors',
-                differs
-                  ? 'bg-alert-wash font-semibold text-alert ring-1 ring-alert/35'
-                  : 'bg-transparent',
+                'rounded-xs px-1 py-0.5',
+                differs ? 'bg-alert-wash font-semibold text-alert ring-1 ring-alert/35' : 'bg-transparent',
               )}
             >
               {block}

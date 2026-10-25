@@ -25,9 +25,12 @@
   --color-plum: #2a1b3d;
   --color-muted: #5e5470;
 
-  /* Semantic. Never used alone — always paired with an icon and a label. */
+  /* Semantic. Never used alone — always paired with an icon and a label.
+     Status colours only: they are not part of the brand palette. */
   --color-alert: #9b2c4a;
   --color-alert-wash: #fbf0f2;
+  --color-sage: #3f6b52;
+  --color-sage-wash: #f0f5f1;
 
   /* Type */
   --font-display: 'Fraunces Variable', 'Iowan Old Style', Georgia, serif;
@@ -45,7 +48,12 @@
   --shadow-lift: 0 2px 4px rgba(42, 27, 61, 0.05), 0 16px 40px -16px rgba(42, 27, 61, 0.16);
   --shadow-rail: 0 1px 0 rgba(42, 27, 61, 0.04);
 
-  --ease-out-soft: cubic-bezier(0.22, 0.61, 0.36, 1);
+  /* Motion. Mirrors src/motion/tokens.js — change both together. */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-state: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur-base: 280ms;
+  --dur-slow: 520ms;
 }
 
 @layer base {
@@ -137,6 +145,12 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .vt-reveal,
+  .vt-reveal[data-reveal='pending'] {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
   *,
   *::before,
   *::after {
@@ -187,6 +201,14 @@
     content: '';
   }
 
+  /* Nothing may be hidden mid-reveal on paper. */
+  .vt-reveal,
+  .vt-reveal[data-reveal='pending'] {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+
   .print-ink {
     color: #000 !important;
   }
@@ -216,10 +238,127 @@
   }
 }
 
+@keyframes vt-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Tooltips and popovers: fade plus a 6px settle, per side. */
+@keyframes vt-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* One short nudge for an error. Never the only signal — the text and icon
+   carry the meaning; this only draws the eye. */
+@keyframes vt-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  75% {
+    transform: translateX(4px);
+  }
+}
+
 @utility anim-fade {
-  animation: vt-fade-in 200ms var(--ease-out-soft);
+  animation: vt-fade-in var(--dur-base) var(--ease-out-soft);
+}
+
+/* Enter-only, deliberately.
+   Radix keeps an overlay or dialog mounted until the `closed` animation
+   reports `animationend`, and with an exit this short that event can be missed
+   — which leaves an invisible overlay sitting over the page and swallowing
+   clicks. A dismissal that always completes is worth more than 140ms of
+   polish, so these close immediately. */
+@utility anim-overlay {
+  animation: vt-overlay-in var(--dur-base) var(--ease-out-soft);
 }
 
 @utility anim-dialog {
-  animation: vt-dialog-in 220ms var(--ease-out-soft);
+  animation: vt-dialog-in 180ms var(--ease-out-soft);
+}
+
+@utility anim-pop {
+  animation: vt-pop-in 150ms var(--ease-out-soft);
+}
+
+@utility anim-shake {
+  animation: vt-shake 220ms var(--ease-state);
+}
+
+/* A 2px lift with a soft shadow that fades in. The shadow lives on a
+   pseudo-element and only its opacity transitions — blur radius never
+   animates. A disabled control never lifts and never casts. */
+@utility vt-lift {
+  position: relative;
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: var(--shadow-lift);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-fast) var(--ease-state);
+  }
+
+  &:hover::after {
+    opacity: 1;
+  }
+
+  &:disabled::after,
+  &[aria-disabled='true']::after {
+    opacity: 0;
+  }
+}
+
+/* One soft ring, once, when something is sealed or verified. Opacity only. */
+@keyframes vt-glow {
+  0% {
+    opacity: 0;
+  }
+  35% {
+    opacity: 0.45;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@utility anim-glow {
+  animation: vt-glow 900ms var(--ease-out-soft) 200ms 1 both;
+}
+
+/* ---------------------------------------------------------------------------
+   Scroll reveal.
+
+   The element is authored at its final state. JavaScript only ever takes
+   visibility away, and only when motion is allowed — so no JavaScript, print,
+   and reduced motion all land on "visible, no transform".
+--------------------------------------------------------------------------- */
+.vt-reveal {
+  transition:
+    opacity var(--dur-slow) var(--ease-out-soft),
+    transform var(--dur-slow) var(--ease-out-soft);
+}
+
+.vt-reveal[data-reveal='pending'] {
+  opacity: 0;
+  transform: translateY(24px);
+}
+
+.vt-reveal[data-reveal='shown'] {
+  opacity: 1;
+  transform: none;
 }

@@ -2,6 +2,7 @@ import { Paperclip } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { cn } from '../lib/cn';
 import { formatDate, formatDateTime } from '../lib/format';
+import { DURATION, EASE, STAGGER, stagger } from '../motion/tokens';
 
 /**
  * Timeline marker.
@@ -51,17 +52,22 @@ export function Timeline({ events, evidenceById, activeEvidenceId, onFocusEviden
             key={event.eventId}
             initial={reduced ? false : { opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.22, delay: Math.min(index * 0.035, 0.25), ease: [0.22, 0.61, 0.36, 1] }}
+            transition={{ duration: DURATION.base, delay: stagger(index, STAGGER.list), ease: EASE.out }}
             className="relative pb-7 pl-7 last:pb-0"
             data-print="section"
           >
-            <span className="absolute left-0 top-[7px] grid w-[13px] place-items-center">
+            <motion.span
+              className="absolute left-0 top-[7px] grid w-[13px] place-items-center"
+              initial={reduced ? false : { opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: DURATION.base, delay: stagger(index, STAGGER.list), ease: EASE.out }}
+            >
               <TimelineMarker uncertain={uncertain} active={active} />
-            </span>
+            </motion.span>
 
             <div
               className={cn(
-                '-mx-2 rounded-md px-2 py-1 transition-colors duration-200',
+                '-mx-2 rounded-md px-2 py-1 transition-colors duration-[var(--dur-fast)]',
                 active && 'bg-wash/70',
               )}
               onMouseEnter={related ? () => onFocusEvidence?.(related.evidenceId) : undefined}
@@ -87,7 +93,7 @@ export function Timeline({ events, evidenceById, activeEvidenceId, onFocusEviden
                   onBlur={() => onFocusEvidence?.(null)}
                   onClick={() => onFocusEvidence?.(related.evidenceId)}
                   className={cn(
-                    'mt-2 inline-flex max-w-full items-center gap-1.5 rounded-sm border px-2 py-1.5 text-xs transition-colors duration-150',
+                    'mt-2 inline-flex max-w-full items-center gap-1.5 rounded-sm border px-2 py-1.5 text-xs transition-colors duration-[var(--dur-fast)]',
                     active
                       ? 'border-violet-deep bg-paper text-violet-deep'
                       : 'border-lilac bg-paper/70 text-muted hover:border-violet hover:text-plum',

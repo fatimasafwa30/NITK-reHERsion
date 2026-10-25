@@ -10,6 +10,7 @@ import { useVera } from '../store/VeraStore';
 import { useToast } from '../store/ToastProvider';
 import { MAX_FILE_BYTES, sha256File } from '../lib/hash';
 import { formatBytes } from '../lib/format';
+import { MS } from '../motion/tokens';
 
 /** One side of the comparison: a quiet drop target that becomes a digest. */
 function FileSlot({ slot, state, onFile, onClear }) {
@@ -63,7 +64,7 @@ function FileSlot({ slot, state, onFile, onClear }) {
           <p className="break-words text-sm font-medium text-plum">{state.file.name}</p>
           <p className="mono mt-1 text-[0.6875rem] text-muted">{formatBytes(state.file.size)}</p>
 
-          {busy ? (
+          {busy && state.showIndicator ? (
             <div className="mt-4">
               <div className="h-[3px] w-full overflow-hidden rounded-full bg-lilac/70">
                 <div
@@ -129,7 +130,7 @@ const SLOTS = {
   },
 };
 
-const EMPTY = { file: null, hash: '', status: 'idle', progress: 0, error: '' };
+const EMPTY = { file: null, hash: '', status: 'idle', progress: 0, error: '', showIndicator: false };
 
 export function Verifier() {
   const { cases, evidenceByCase } = useVera();
@@ -138,6 +139,7 @@ export function Verifier() {
   const [original, setOriginal] = useState(EMPTY);
   const [candidate, setCandidate] = useState(EMPTY);
   const [referenceId, setReferenceId] = useState('');
+  const resultHeadingRef = useRef(null);
 
   const records = useMemo(
     () =>
@@ -157,13 +159,23 @@ export function Verifier() {
       toast('File is too large', { tone: 'error', detail: 'This demo hashes files up to 50 MB.' });
       return;
     }
-    setState({ file, hash: '', status: 'hashing', progress: 0, error: '' });
+    setState({ ...EMPTY, file, status: 'hashing' });
+
+    // Nothing that finishes inside 150ms gets an indicator; a bar that appears
+    // and disappears again reads as a glitch.
+    const indicatorTimer = setTimeout(
+      () => setState((prev) => (prev.status === 'hashing' ? { ...prev, showIndicator: true } : prev)),
+      MS.indicatorDelay,
+    );
+
     try {
       const hash = await sha256File(file, (progress) =>
         setState((prev) => ({ ...prev, progress })),
       );
-      setState({ file, hash, status: 'done', progress: 1, error: '' });
+      clearTimeout(indicatorTimer);
+      setState({ file, hash, status: 'done', progress: 1, error: '', showIndicator: false });
     } catch (error) {
+      clearTimeout(indicatorTimer);
       setState({ ...EMPTY, file, error: error.message || 'That file could not be read.' });
       toast('Could not hash that file', { tone: 'error', detail: error.message });
     }
@@ -172,6 +184,12 @@ export function Verifier() {
   const ready = Boolean(expected && candidate.hash);
   const matched = ready && expected === candidate.hash;
   const announcedRef = useRef('');
+
+  // True only while a real digest is being computed, and only once that has
+  // taken long enough to be worth saying out loud.
+  const comparing =
+    (original.status === 'hashing' && original.showIndicator) ||
+    (candidate.status === 'hashing' && candidate.showIndicator);
 
   // One toast per distinct comparison, never one per render.
   useEffect(() => {
@@ -185,6 +203,7 @@ export function Verifier() {
         ? 'The file has not changed since the original.'
         : 'The two files are not the same bytes.',
     });
+    resultHeadingRef.current?.focus({ preventScroll: true });
   }, [ready, matched, expected, candidate.hash, toast]);
 
   const reset = () => {
@@ -265,8 +284,8 @@ export function Verifier() {
       </div>
 
       <p role="status" aria-live="polite" className="sr-only">
-        {original.status === 'hashing' || candidate.status === 'hashing'
-          ? 'Hashing a file.'
+        {comparing
+          ? 'Comparing files.'
           : ready
             ? matched
               ? 'The hashes match. The file has not changed.'
@@ -275,13 +294,26 @@ export function Verifier() {
       </p>
 
       <div className="mt-10">
-        {ready ? (
+        {comparing ? (
+          <div className="rounded-lg border border-lilac bg-paper px-6 py-10 text-center">
+            <span
+              aria-hidden="true"
+              className="mx-auto block size-6 rounded-full border border-dashed border-violet motion-safe:animate-spin"
+            />
+            <h2 className="display-md mt-4 text-plum">Comparing files…</h2>
+            <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-muted">
+              Reading the bytes and computing the digest on this device.
+            </p>
+          </div>
+        ) : ready ? (
           <>
             <HashComparison
               expected={expected}
               actual={candidate.hash}
               expectedLabel={expectedLabel}
-              actualLabel={`The file to check · ${candidate.file?.name || ''}`}
+              actualLabel="The file to check"
+              fileName={candidate.file?.name}
+              headingRef={resultHeadingRef}
             />
             <div className="mt-5">
               <Button variant="secondary" onClick={reset}>

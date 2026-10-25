@@ -113,7 +113,8 @@ function Detail({ record, caseId, onClose, onRemove }) {
           <HashComparison
             expected={record.sha256}
             actual={result.sha256}
-            actualLabel={`Hash of ${result.fileName}`}
+            actualLabel="The file you chose"
+            fileName={result.fileName}
           />
         </div>
       ) : null}

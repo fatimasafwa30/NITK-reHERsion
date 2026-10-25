@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState } fro
 import { AnimatePresence, motion } from 'motion/react';
 import { Check, CircleAlert, Info, X } from 'lucide-react';
 import { cn } from '../lib/cn';
+import { DISTANCE, EASE } from '../motion/tokens';
 
 const ToastContext = createContext(null);
 
@@ -54,10 +55,10 @@ export function ToastProvider({ children }) {
             return (
               <motion.div
                 key={t.id}
-                initial={{ opacity: 0, y: 8 }}
+                initial={{ opacity: 0, y: DISTANCE.shift }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 4 }}
-                transition={{ duration: 0.2, ease: [0.22, 0.61, 0.36, 1] }}
+                exit={{ opacity: 0, y: 2, transition: { duration: 0.14, ease: EASE.inOut } }}
+                transition={{ duration: 0.18, ease: EASE.out }}
                 className={cn(
                   'pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-md border bg-paper px-4 py-3 shadow-lift',
                   t.tone === 'error' ? 'border-alert/35' : 'border-lilac',

@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion, useReducedMotion } from 'motion/react';
 import { FolderClosed, Plus, Search, SlidersHorizontal } from 'lucide-react';
 import { Button } from '../components/ui/Button';
+import { DURATION, EASE, stagger } from '../motion/tokens';
 import { Input, Select } from '../components/ui/Field';
 import { EmptyState } from '../components/ui/EmptyState';
 import { CaseStatusMark } from '../components/ui/StatusMark';
@@ -130,12 +131,12 @@ export function Dashboard() {
                 key={item.caseId}
                 initial={reduced ? false : { opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.22, delay: Math.min(index * 0.03, 0.2), ease: [0.22, 0.61, 0.36, 1] }}
+                transition={{ duration: DURATION.base, delay: stagger(index), ease: EASE.out }}
                 className="group border-b border-lilac"
               >
                 <div
                   onClick={() => navigate(`/case/${item.caseId}`)}
-                  className="relative cursor-pointer px-2 py-5 transition-colors duration-200 hover:bg-wash/55 sm:px-4"
+                  className="relative cursor-pointer px-2 py-5 transition-colors duration-[var(--dur-fast)] hover:bg-wash/55 focus-within:bg-wash/40 sm:px-4"
                 >
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-8">
                     <div className="min-w-0 flex-1">

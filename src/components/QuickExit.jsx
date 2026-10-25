@@ -15,7 +15,9 @@ export function QuickExitButton({ className }) {
       type="button"
       onClick={quickExit}
       className={cn(
-        'inline-flex min-h-11 items-center gap-1.5 rounded-md border border-lilac bg-paper px-3 text-[0.8125rem] font-medium text-plum transition-colors duration-150 hover:border-violet hover:bg-wash/60',
+        // Hover may transition; the action itself never does. Nothing here
+        // delays the click, and the control is painted on the first frame.
+        'inline-flex min-h-11 items-center gap-1.5 rounded-md border border-lilac bg-paper px-3 text-[0.8125rem] font-medium text-plum transition-colors duration-[var(--dur-fast)] hover:border-violet hover:bg-wash/60',
         className,
       )}
     >

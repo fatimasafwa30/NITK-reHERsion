@@ -15,7 +15,7 @@ export function Dialog({ open, onOpenChange, title, description, children, foote
   return (
     <RDialog.Root open={open} onOpenChange={onOpenChange}>
       <RDialog.Portal>
-        <RDialog.Overlay className="fixed inset-0 z-50 bg-plum/35 anim-fade" data-print="hide" />
+        <RDialog.Overlay className="fixed inset-0 z-50 bg-plum/35 anim-overlay" data-print="hide" />
         <RDialog.Content
           onEscapeKeyDown={(event) => event.preventDefault()}
           className={cn(

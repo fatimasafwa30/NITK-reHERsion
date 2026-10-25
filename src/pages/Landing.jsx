@@ -1,7 +1,10 @@
 import { Link } from 'react-router-dom';
+import { cn } from '../lib/cn';
 import { motion, useReducedMotion } from 'motion/react';
 import { ArrowRight } from 'lucide-react';
 import { Button } from '../components/ui/Button';
+import { Reveal } from '../motion/Reveal';
+import { DURATION, EASE, heroDelay, riseIn } from '../motion/tokens';
 import { EvidenceSheet } from '../components/EvidenceSheet';
 import { Timeline } from '../components/Timeline';
 import { mockEvidenceByCase } from '../data/mockEvidence';
@@ -13,6 +16,24 @@ const SPECIMEN_EVENTS = mockTimelineByCase.case_1001;
 const SPECIMEN_EVIDENCE_BY_ID = Object.fromEntries(
   mockEvidenceByCase.case_1001.map((record) => [record.evidenceId, record]),
 );
+
+/**
+ * The headline, word by word, so it can rise in sequence. The text itself is
+ * unchanged — `textContent` still reads as one sentence for screen readers and
+ * for the route announcer.
+ */
+const HEADLINE = [
+  'Keep',
+  'the',
+  'record',
+  { text: 'straight,', em: true },
+  'long',
+  'before',
+  'anyone',
+  'asks',
+  'for',
+  'it.',
+];
 
 const STEPS = [
   {
@@ -34,14 +55,10 @@ const STEPS = [
 
 export function Landing() {
   const reduced = useReducedMotion();
-  const rise = (delay) =>
-    reduced
-      ? {}
-      : {
-          initial: { opacity: 0, y: 8 },
-          animate: { opacity: 1, y: 0 },
-          transition: { duration: 0.25, delay, ease: [0.22, 0.61, 0.36, 1] },
-        };
+  // The hero sequence: one stagger step per element, capped so the whole thing
+  // settles inside 1.4s. Nothing here gates interaction — every control is live
+  // and clickable on the first frame, mid-animation included.
+  const rise = (step) => riseIn(reduced, { delay: heroDelay(step) });
 
   return (
     <>
@@ -53,17 +70,30 @@ export function Landing() {
               Evidence preservation
             </motion.p>
 
-            <motion.h1 className="display-xl mt-5 max-w-[19ch] text-plum" {...rise(0.04)}>
-              Keep the record <em className="italic">straight</em>, long before anyone asks for it.
-            </motion.h1>
+            <h1 className="display-xl mt-5 max-w-[19ch] text-plum">
+              {HEADLINE.map((part, index) => {
+                const word = typeof part === 'string' ? part : part.text;
+                const italic = typeof part !== 'string' && part.em;
+                return (
+                  <motion.span
+                    key={`${word}-${index}`}
+                    className={cn('inline-block whitespace-pre', italic && 'italic')}
+                    {...rise(1 + index * 0.5)}
+                  >
+                    {word}
+                    {index < HEADLINE.length - 1 ? ' ' : ''}
+                  </motion.span>
+                );
+              })}
+            </h1>
 
-            <motion.p className="mt-7 max-w-lg text-[1.0625rem] leading-relaxed text-muted" {...rise(0.09)}>
+            <motion.p className="mt-7 max-w-lg text-[1.0625rem] leading-relaxed text-muted" {...rise(2)}>
               VeraTrace is a quiet place to preserve what happened. Every file you add is fingerprinted with
               SHA-256 on your own device and set down in a timestamped record you can read, order, and hand over
               when you choose to.
             </motion.p>
 
-            <motion.div className="mt-9 flex flex-wrap items-center gap-x-6 gap-y-3" {...rise(0.14)}>
+            <motion.div className="mt-9 flex flex-wrap items-center gap-x-6 gap-y-3" {...rise(3)}>
               <Button to="/dashboard" variant="primary" size="lg">
                 Open your cases
                 <ArrowRight aria-hidden="true" strokeWidth={1.5} className="size-4" />
@@ -76,13 +106,22 @@ export function Landing() {
               </Link>
             </motion.div>
 
-            <motion.p className="mono mt-10 max-w-md text-[0.6875rem] leading-relaxed text-muted" {...rise(0.18)}>
+            <motion.p className="mono mt-10 max-w-md text-[0.6875rem] leading-relaxed text-muted" {...rise(4)}>
               Press <span className="text-plum">Esc</span> at any moment to leave for a neutral page.
             </motion.p>
           </div>
 
           {/* The focal visual is the real component, not a picture of one. */}
-          <motion.div className="lg:col-span-5 lg:pt-12" {...rise(0.1)}>
+          <motion.div
+            className="lg:col-span-5 lg:pt-12"
+            initial={reduced ? { opacity: 0 } : { opacity: 0, y: 24, rotate: 1.5 }}
+            animate={reduced ? { opacity: 1 } : { opacity: 1, y: 0, rotate: 0 }}
+            transition={
+              reduced
+                ? { duration: 0.1, ease: 'linear' }
+                : { duration: DURATION.hero, delay: heroDelay(5), ease: EASE.out }
+            }
+          >
             <div className="relative">
               <div
                 aria-hidden="true"
@@ -102,7 +141,7 @@ export function Landing() {
       </section>
 
       {/* ── Process: one rule, three stops. */}
-      <section className="border-y border-lilac bg-wash/45" aria-labelledby="process-heading">
+      <Reveal as="section" className="border-y border-lilac bg-wash/45" aria-labelledby="process-heading">
         <div className="mx-auto w-full max-w-6xl px-5 py-16 sm:px-8 sm:py-20">
           <h2 id="process-heading" className="display-lg max-w-md text-plum">
             Three steps, and then it is on the record.
@@ -130,10 +169,10 @@ export function Landing() {
             </ol>
           </div>
         </div>
-      </section>
+      </Reveal>
 
       {/* ── The second signature element, shown rather than described. */}
-      <section className="mx-auto w-full max-w-6xl px-5 py-20 sm:px-8 sm:py-24">
+      <Reveal as="section" className="mx-auto w-full max-w-6xl px-5 py-20 sm:px-8 sm:py-24">
         <div className="grid gap-12 lg:grid-cols-12 lg:gap-16">
           <div className="lg:col-span-5">
             <p className="eyebrow">The timeline</p>
@@ -157,10 +196,10 @@ export function Landing() {
             </div>
           </div>
         </div>
-      </section>
+      </Reveal>
 
       {/* ── Honest limits, in plain prose. No box, no icon, no reassurance. */}
-      <section className="border-t border-lilac" aria-labelledby="limits-heading">
+      <Reveal as="section" className="border-t border-lilac" aria-labelledby="limits-heading">
         <div className="mx-auto w-full max-w-6xl px-5 py-16 sm:px-8 sm:py-20">
           <div className="max-w-2xl">
             <h2 id="limits-heading" className="eyebrow">
@@ -178,10 +217,10 @@ export function Landing() {
             </p>
           </div>
         </div>
-      </section>
+      </Reveal>
 
       {/* ── Closing band. */}
-      <section className="border-t border-lilac bg-wash/55">
+      <Reveal as="section" className="border-t border-lilac bg-wash/55">
         <div className="mx-auto w-full max-w-6xl px-5 py-20 sm:px-8 sm:py-24">
           <div className="flex flex-col gap-8 sm:flex-row sm:items-end sm:justify-between">
             <h2 className="display-lg max-w-[20ch] text-plum">
@@ -196,7 +235,7 @@ export function Landing() {
             </div>
           </div>
         </div>
-      </section>
+      </Reveal>
     </>
   );
 }

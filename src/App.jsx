@@ -1,4 +1,5 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { MotionConfig } from 'motion/react';
 import { VeraStoreProvider } from './store/VeraStore';
 import { ToastProvider } from './store/ToastProvider';
 import { TooltipProvider } from './components/ui/Tooltip';
@@ -36,14 +37,18 @@ function Shell() {
 
 export function App() {
   return (
-    <BrowserRouter>
-      <VeraStoreProvider>
-        <ToastProvider>
-          <TooltipProvider>
-            <Shell />
-          </TooltipProvider>
-        </ToastProvider>
-      </VeraStoreProvider>
-    </BrowserRouter>
+    // `reducedMotion="user"` makes the library drop every transform animation
+    // when the system asks for less motion, leaving opacity only.
+    <MotionConfig reducedMotion="user">
+      <BrowserRouter>
+        <VeraStoreProvider>
+          <ToastProvider>
+            <TooltipProvider>
+              <Shell />
+            </TooltipProvider>
+          </ToastProvider>
+        </VeraStoreProvider>
+      </BrowserRouter>
+    </MotionConfig>
   );
 }

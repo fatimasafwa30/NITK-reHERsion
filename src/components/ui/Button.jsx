@@ -23,8 +23,11 @@ const SIZES = {
   icon: 'size-11 rounded-md justify-center',
 };
 
+// A 2px lift on hover with a shadow that fades in (opacity only, via the
+// vt-lift pseudo-element — no blur radius is ever animated), and a 0.97
+// settle on press. A disabled button neither lifts nor casts.
 const BASE =
-  'inline-flex items-center justify-center font-medium transition-[color,background-color,border-color,box-shadow] duration-200 ease-[var(--ease-out-soft)] disabled:cursor-not-allowed disabled:opacity-55 select-none';
+  'vt-lift inline-flex items-center justify-center font-medium select-none transition-[color,background-color,border-color,transform] duration-[var(--dur-fast)] ease-[var(--ease-state)] hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.97] active:duration-75 disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0 disabled:active:scale-100 aria-disabled:hover:translate-y-0 aria-disabled:active:scale-100';
 
 export const Button = forwardRef(function Button(
   { as, to, href, variant = 'secondary', size = 'md', className, children, ...props },

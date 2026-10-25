@@ -16,7 +16,7 @@ export function Tooltip({ label, children, side = 'top' }) {
         <RTooltip.Content
           side={side}
           sideOffset={6}
-          className="z-80 max-w-56 rounded-sm border border-lilac bg-paper px-2.5 py-1.5 text-xs leading-relaxed text-plum shadow-sheet"
+          className="anim-pop z-80 max-w-56 rounded-sm border border-lilac bg-paper px-2.5 py-1.5 text-xs leading-relaxed text-plum shadow-sheet"
           data-print="hide"
         >
           {label}
