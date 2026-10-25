@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ChevronRight, Clock3, FileSearch, Plus, ScrollText } from 'lucide-react';
 import { Button } from '../components/ui/Button';
@@ -9,14 +9,53 @@ import { Timeline } from '../components/Timeline';
 import { AddEventDialog } from '../components/AddEventDialog';
 import { useVera } from '../store/VeraStore';
 import { formatDate, relativeDay } from '../lib/format';
+import { mockCases } from '../data/mockCases';
+import { getEvidenceForCase } from '../services/evidenceService';
+import {
+  getTimelineForCase,
+  addTimelineEventForCase,
+  subscribeTimeline,
+} from '../services/timelineService';
 
-export function CaseOverview() {
+export function CaseOverview({ onAddEvidence, onAddTimelineEvent } = {}) {
   const { caseId } = useParams();
-  const { getCase, getEvidence, getTimeline } = useVera();
 
-  const record = getCase(caseId);
-  const evidence = getEvidence(caseId);
-  const events = getTimeline(caseId);
+  let vera = null;
+  try {
+    vera = useVera();
+  } catch {
+    vera = null;
+  }
+
+  const [, setTimelineTick] = useState(0);
+
+  // Subscribe to live timeline state updates
+  useEffect(() => {
+    if (!caseId) return undefined;
+    return subscribeTimeline(caseId, () => {
+      setTimelineTick((t) => t + 1);
+    });
+  }, [caseId]);
+
+  const record =
+    vera?.getCase(caseId) ||
+    mockCases.find((c) => c.caseId === caseId) ||
+    (caseId ? { caseId, title: 'Case Record', status: 'OPEN', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), summary: '' } : null);
+
+  const evidenceFromStore = vera?.getEvidence(caseId) || [];
+  const serviceEvidence = caseId ? getEvidenceForCase(caseId) : [];
+  const evidence = serviceEvidence.length > 0 ? serviceEvidence : evidenceFromStore;
+
+  const timelineFromStore = vera?.getTimeline(caseId) || [];
+  const serviceTimeline = caseId ? getTimelineForCase(caseId) : [];
+  const allEvents = [...timelineFromStore, ...serviceTimeline];
+  const seen = new Set();
+  const events = allEvents.filter((e) => {
+    const key = e.eventId || `${e.label}_${e.occurredAt}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 
   const [eventOpen, setEventOpen] = useState(false);
   const [activeEvidenceId, setActiveEvidenceId] = useState(null);
@@ -35,8 +74,7 @@ export function CaseOverview() {
           action={<Button to="/dashboard" variant="primary">Back to your cases</Button>}
         >
           <p>
-            The case <span className="mono text-plum">{caseId}</span> is not in this browser. If you reset the demo
-            data, cases you added earlier were discarded.
+            The case <span className="mono text-plum">{caseId}</span> is not in this browser.
           </p>
         </EmptyState>
       </div>
@@ -71,8 +109,7 @@ export function CaseOverview() {
       </header>
 
       <div className="mt-10 grid gap-10 lg:grid-cols-12 lg:gap-12">
-        {/* Rail. On a phone the actions come first, because that is what a
-            person reaches for; on a desktop it sits beside the record. */}
+        {/* Rail */}
         <aside className="order-first lg:order-last lg:col-span-4">
           <div className="lg:sticky lg:top-24">
             <div className="rounded-lg border border-lilac bg-paper p-5 shadow-sheet sm:p-6">
@@ -107,10 +144,20 @@ export function CaseOverview() {
               </dl>
 
               <div className="mt-6 flex flex-col gap-2">
-                <Button to={`/case/${record.caseId}/evidence`} variant="primary">
+                <Button
+                  to={`/case/${record.caseId}/evidence`}
+                  variant="primary"
+                  onClick={onAddEvidence}
+                >
                   <Plus aria-hidden="true" strokeWidth={1.5} className="size-4" />
                   Add evidence
                 </Button>
+                <Link
+                  to={`/case/${record.caseId}/evidence`}
+                  className="mt-1 inline-flex min-h-11 items-center text-[0.8125rem] text-violet-deep underline decoration-lilac decoration-1 underline-offset-4 hover:decoration-violet"
+                >
+                  Open evidence workspace
+                </Link>
                 <Button variant="secondary" onClick={() => setEventOpen(true)}>
                   <Clock3 aria-hidden="true" strokeWidth={1.5} className="size-4" />
                   Add timeline event
@@ -147,7 +194,7 @@ export function CaseOverview() {
           </div>
         </aside>
 
-        {/* The record itself. */}
+        {/* The record itself */}
         <section className="lg:col-span-8" aria-labelledby="timeline-heading">
           <div className="flex items-end justify-between gap-4">
             <div>
@@ -196,7 +243,14 @@ export function CaseOverview() {
         </section>
       </div>
 
-      <AddEventDialog open={eventOpen} onOpenChange={setEventOpen} caseId={record.caseId} evidence={evidence} />
+      <AddEventDialog
+        open={eventOpen}
+        onOpenChange={setEventOpen}
+        caseId={record.caseId}
+        evidence={evidence}
+      />
     </div>
   );
 }
+
+export default CaseOverview;

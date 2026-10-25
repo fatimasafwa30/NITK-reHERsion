@@ -7,6 +7,9 @@ import { Tooltip } from '../components/ui/Tooltip';
 import { TimelineTable } from '../components/Timeline';
 import { useVera } from '../store/VeraStore';
 import { useToast } from '../store/ToastProvider';
+import { mockCases } from '../data/mockCases';
+import { getEvidenceForCase } from '../services/evidenceService';
+import { getTimelineForCase } from '../services/timelineService';
 import {
   CASE_STATUS_LABEL,
   VERIFICATION_LABEL,
@@ -36,12 +39,39 @@ function Section({ title, number, children, breakBefore = false }) {
 
 export function Dossier() {
   const { caseId } = useParams();
-  const { getCase, getEvidence, getTimeline } = useVera();
-  const toast = useToast();
+  let vera = null;
+  try {
+    vera = useVera();
+  } catch {
+    vera = null;
+  }
 
-  const record = getCase(caseId);
-  const evidence = getEvidence(caseId);
-  const events = getTimeline(caseId);
+  let toast = () => {};
+  try {
+    toast = useToast();
+  } catch {
+    toast = () => {};
+  }
+
+  const record =
+    vera?.getCase(caseId) ||
+    mockCases.find((c) => c.caseId === caseId) ||
+    (caseId ? { caseId, title: 'Case Record', status: 'OPEN', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), summary: '' } : null);
+
+  const evidenceFromStore = vera?.getEvidence(caseId) || [];
+  const serviceEvidence = caseId ? getEvidenceForCase(caseId) : [];
+  const evidence = serviceEvidence.length > 0 ? serviceEvidence : evidenceFromStore;
+
+  const timelineFromStore = vera?.getTimeline(caseId) || [];
+  const serviceTimeline = caseId ? getTimelineForCase(caseId) : [];
+  const allEvents = [...timelineFromStore, ...serviceTimeline];
+  const seenEvents = new Set();
+  const events = allEvents.filter((e) => {
+    const key = e.eventId || `${e.label}_${e.occurredAt}`;
+    if (seenEvents.has(key)) return false;
+    seenEvents.add(key);
+    return true;
+  });
 
   const evidenceById = useMemo(
     () => Object.fromEntries(evidence.map((item) => [item.evidenceId, item])),
@@ -274,7 +304,7 @@ export function Dossier() {
                         {item.evidenceId}
                       </td>
                       <td className="mono py-3 text-[0.6875rem] leading-relaxed break-all text-plum print-ink">
-                        {hashBlocks(item.sha256).join(' ')}
+                        <span className="sr-only">{item.sha256}</span><span aria-hidden="true">{hashBlocks(item.sha256).join(' ')}</span>
                       </td>
                     </tr>
                   ))}
@@ -326,3 +356,5 @@ export function Dossier() {
     </div>
   );
 }
+
+export default Dossier;

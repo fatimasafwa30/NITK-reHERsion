@@ -79,7 +79,7 @@ export function Timeline({ events, evidenceById, activeEvidenceId, onFocusEviden
                 </time>
                 {uncertain ? (
                   <span className="rounded-xs border border-dashed border-violet px-1.5 py-px not-italic text-violet-deep">
-                    date uncertain
+                    Uncertain (date uncertain)
                   </span>
                 ) : null}
               </p>

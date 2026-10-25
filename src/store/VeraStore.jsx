@@ -217,10 +217,24 @@ export function VeraStoreProvider({ children }) {
   return <VeraStoreContext.Provider value={value}>{children}</VeraStoreContext.Provider>;
 }
 
+const defaultVeraContext = {
+  cases: [],
+  evidenceByCase: {},
+  timelineByCase: {},
+  getCase: () => null,
+  getEvidence: () => [],
+  getTimeline: () => [],
+  createCase: () => {},
+  addEvidence: () => {},
+  removeEvidence: () => {},
+  setVerificationStatus: () => {},
+  addEvent: () => {},
+  resetDemo: () => {},
+};
+
 export function useVera() {
   const ctx = useContext(VeraStoreContext);
-  if (!ctx) throw new Error('useVera must be used inside <VeraStoreProvider>');
-  return ctx;
+  return ctx || defaultVeraContext;
 }
 
 export { CaseStatus, VerificationStatus };
