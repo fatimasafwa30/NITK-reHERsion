@@ -34,6 +34,18 @@ export const RELATION_STATUSES = Object.freeze({
 });
 
 /**
+ * Stop-list of generic usernames, service accounts, and short words
+ * that should NEVER be used to assert cross-platform correlation.
+ */
+export const GENERIC_IDENTIFIER_STOPLIST = new Set([
+  'admin', 'administrator', 'support', 'help', 'info', 'service',
+  'contact', 'team', 'test', 'user', 'null', 'anonymous', 'official',
+  'moderator', 'customer', 'staff', 'billing', 'feedback', 'sales',
+  'notifications', 'security', 'alert', 'dev', 'system', 'root',
+  'account', 'profile', 'member', 'update', 'status'
+]);
+
+/**
  * Normalizes handles, phone numbers, or emails for matching.
  */
 export function normalizeIdentifier(val = '') {
@@ -208,6 +220,11 @@ export function analyzeCaseIntelligence(caseId) {
 
   // B. Cross-Platform Shared Identifiers
   handleMap.forEach((instances, normHandle) => {
+    // Exclude generic identifiers and excessively short handles (< 4 characters)
+    if (!normHandle || normHandle.length < 4 || GENERIC_IDENTIFIER_STOPLIST.has(normHandle)) {
+      return;
+    }
+
     // If handle root appears across different platforms
     const platforms = new Set(instances.map((i) => i.platform).filter(Boolean));
     if (platforms.size > 1) {

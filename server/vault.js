@@ -135,3 +135,70 @@ export async function retrieveVaultFile(fileRecord) {
 
   return decryptedBuffer;
 }
+
+/**
+ * Derives a distinct 256-bit encryption key dedicated for backups.
+ */
+export function getBackupKey() {
+  if (process.env.VERATRACE_BACKUP_KEY) {
+    return crypto.scryptSync(process.env.VERATRACE_BACKUP_KEY, 'veratrace-backup-salt-v1', 32);
+  }
+  const masterKey = getVaultMasterKey();
+  return crypto.scryptSync(masterKey, 'veratrace-backup-salt-v1', 32);
+}
+
+/**
+ * Encrypts a backup payload string using AES-256-GCM.
+ */
+export function encryptBackup(payloadJsonString) {
+  const key = getBackupKey();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+
+  const payloadBuffer = Buffer.from(payloadJsonString, 'utf8');
+  const encrypted = Buffer.concat([cipher.update(payloadBuffer), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  const sha256 = calculateSha256(payloadBuffer);
+
+  return {
+    format: 'VERATRACE_ENCRYPTED_BACKUP_V1',
+    cipher: 'aes-256-gcm',
+    createdUtc: new Date().toISOString(),
+    iv: iv.toString('hex'),
+    tag: tag.toString('hex'),
+    sha256,
+    ciphertextBase64: encrypted.toString('base64'),
+  };
+}
+
+/**
+ * Decrypts an encrypted backup envelope with AES-256-GCM authentication.
+ */
+export function decryptBackup(backupEnvelope, overrideKey = null) {
+  if (!backupEnvelope || backupEnvelope.format !== 'VERATRACE_ENCRYPTED_BACKUP_V1') {
+    throw new Error('Unsupported or malformed backup format. Expected VERATRACE_ENCRYPTED_BACKUP_V1.');
+  }
+
+  const key = overrideKey || getBackupKey();
+  const iv = Buffer.from(backupEnvelope.iv, 'hex');
+  const tag = Buffer.from(backupEnvelope.tag, 'hex');
+  const encryptedBuffer = Buffer.from(backupEnvelope.ciphertextBase64, 'base64');
+
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(tag);
+
+  let decryptedBuffer;
+  try {
+    decryptedBuffer = Buffer.concat([decipher.update(encryptedBuffer), decipher.final()]);
+  } catch (err) {
+    throw new Error(`Backup Decryption Failed: Authentication tag mismatch or corrupted ciphertext (${err.message}).`);
+  }
+
+  const computedHash = calculateSha256(decryptedBuffer);
+  if (computedHash !== backupEnvelope.sha256) {
+    throw new Error(`Backup Integrity Violation: Decrypted payload hash ${computedHash} does not match header ${backupEnvelope.sha256}.`);
+  }
+
+  return JSON.parse(decryptedBuffer.toString('utf8'));
+}
+

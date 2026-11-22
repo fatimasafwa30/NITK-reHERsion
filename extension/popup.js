@@ -171,6 +171,20 @@ document.getElementById('btn-discard')?.addEventListener('click', () => {
   document.querySelector('[data-tab="tab-capture"]').click();
 });
 
+// Inline Notification System (Replaces disruptive window.alert/confirm)
+function showNotification(message, type = 'info', durationMs = 5000) {
+  const el = document.getElementById('inline-notification');
+  if (!el) return;
+  el.textContent = message;
+  el.className = `inline-banner ${type}`;
+  el.style.display = 'block';
+
+  if (window._notifTimer) clearTimeout(window._notifTimer);
+  window._notifTimer = setTimeout(() => {
+    el.style.display = 'none';
+  }, durationMs);
+}
+
 // 2. Upload to VeraTrace API
 document.getElementById('evidence-form')?.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -208,11 +222,12 @@ document.getElementById('evidence-form')?.addEventListener('submit', async (e) =
         filename: data.evidence.original_filename,
         sha256: currentCapture.sha256,
         url: currentCapture.url,
+        caseId,
         uploadedAt: new Date().toISOString(),
         status: 'SEALED_IN_VAULT',
       });
 
-      alert(`Evidence sealed successfully in VeraTrace!\nEvidence ID: ${data.evidence.evidence_id}\nSHA-256: ${currentCapture.sha256.slice(0, 16)}...`);
+      showNotification(`Evidence sealed in Vault! Evidence ID: ${data.evidence.evidence_id} (SHA-256: ${currentCapture.sha256.slice(0, 16)}...)`, 'success', 6000);
 
       currentCapture = null;
       document.getElementById('no-capture-placeholder').style.display = 'block';
@@ -222,18 +237,24 @@ document.getElementById('evidence-form')?.addEventListener('submit', async (e) =
       throw new Error(`Server returned HTTP ${res.status}`);
     }
   } catch (err) {
-    // Offline resilience: save in local queue so evidence is not lost
+    // Offline resilience: save in local queue with base64 dataUrl so evidence is never lost and can be retried
     const offlineId = `offline_${Date.now()}`;
     saveToLocalHistory({
       evidenceId: offlineId,
       filename: `capture_${Date.now()}.png`,
       sha256: currentCapture.sha256,
       url: currentCapture.url,
+      caseId,
+      platform,
+      senderHandle,
+      notes,
+      captureTimestamp: currentCapture.captureTimestamp,
+      dataUrl: currentCapture.dataUrl, // Preserved for retry transmission
       uploadedAt: new Date().toISOString(),
       status: 'SAVED_LOCALLY_PENDING_SYNC',
     });
 
-    alert(`VeraTrace local server offline. Capture preserved safely in extension local storage queue!\nSHA-256: ${currentCapture.sha256.slice(0, 16)}...`);
+    showNotification(`VeraTrace local server unreachable. Capture queued safely in offline local storage!`, 'info', 6000);
     currentCapture = null;
     document.getElementById('no-capture-placeholder').style.display = 'block';
     document.getElementById('review-content').style.display = 'none';
@@ -243,6 +264,99 @@ document.getElementById('evidence-form')?.addEventListener('submit', async (e) =
     btnUpload.textContent = 'Upload to Vault';
   }
 });
+
+// Offline Queue Synchronizer & Retry Engine
+async function syncPendingCaptures() {
+  const syncBtn = document.getElementById('btn-sync-pending');
+  const statusEl = document.getElementById('sync-status');
+  if (syncBtn) syncBtn.disabled = true;
+
+  if (statusEl) {
+    statusEl.style.display = 'block';
+    statusEl.textContent = 'Checking pending queue for retries...';
+  }
+
+  const getItems = () =>
+    new Promise((resolve) => {
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.get(['veratrace_history'], (res) => resolve(res.veratrace_history || []));
+      } else {
+        resolve(JSON.parse(localStorage.getItem('veratrace_history') || '[]'));
+      }
+    });
+
+  const saveItems = (items) =>
+    new Promise((resolve) => {
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({ veratrace_history: items }, resolve);
+      } else {
+        localStorage.setItem('veratrace_history', JSON.stringify(items));
+        resolve();
+      }
+    });
+
+  const history = await getItems();
+  const pending = history.filter((item) => item.status === 'SAVED_LOCALLY_PENDING_SYNC' && item.dataUrl && !item.in_flight);
+
+  if (pending.length === 0) {
+    if (statusEl) statusEl.textContent = 'No offline captures pending synchronization.';
+    if (syncBtn) syncBtn.disabled = false;
+    setTimeout(() => { if (statusEl) statusEl.style.display = 'none'; }, 3000);
+    return;
+  }
+
+  let syncedCount = 0;
+  for (const item of pending) {
+    item.in_flight = true;
+    try {
+      const blob = dataUrlToBlob(item.dataUrl);
+      const formData = new FormData();
+      formData.append('file', blob, item.filename);
+      formData.append('submissionSource', 'EXTENSION_CAPTURE');
+      formData.append('submissionMethod', 'CHROME_EXT_MV3_OFFLINE_RETRY');
+      formData.append('captureTimestamp', item.captureTimestamp || item.uploadedAt);
+      formData.append('sourceUrl', item.url || '');
+      formData.append('platform', item.platform || 'Other');
+      formData.append('senderHandle', item.senderHandle || '');
+      formData.append('notes', item.notes || 'Synced from offline queue');
+
+      const res = await fetch(`${API_BASE}/cases/${item.caseId || 'VT-DEMO-2026'}/evidence`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        item.status = 'SEALED_IN_VAULT';
+        item.evidenceId = data.evidence?.evidence_id || item.evidenceId;
+        delete item.dataUrl; // Free storage memory once safely ingested
+        item.syncedAt = new Date().toISOString();
+        syncedCount++;
+      }
+    } catch (err) {
+      // Server still offline; keep in queue for next retry
+    } finally {
+      delete item.in_flight;
+    }
+  }
+
+  await saveItems(history);
+  renderHistory();
+
+  if (statusEl) {
+    if (syncedCount > 0) {
+      statusEl.textContent = `Successfully synchronized ${syncedCount} offline capture(s) to vault!`;
+      showNotification(`Synchronized ${syncedCount} offline capture(s) to VeraTrace!`, 'success');
+    } else {
+      statusEl.textContent = `VeraTrace server still offline. Captures remain securely stored locally.`;
+    }
+  }
+
+  if (syncBtn) syncBtn.disabled = false;
+  setTimeout(() => { if (statusEl) statusEl.style.display = 'none'; }, 4000);
+}
+
+document.getElementById('btn-sync-pending')?.addEventListener('click', syncPendingCaptures);
 
 // History Management (chrome.storage.local)
 function saveToLocalHistory(entry) {
@@ -274,11 +388,14 @@ function renderHistory() {
     items.forEach((item) => {
       const el = document.createElement('div');
       el.className = 'history-item';
+      const isPending = item.status === 'SAVED_LOCALLY_PENDING_SYNC';
       el.innerHTML = `
         <span class="title">${item.filename}</span>
         <span class="text-xs text-muted mono">${item.sha256.slice(0, 24)}...</span>
         <div class="meta">
-          <span>${item.status}</span>
+          <span style="color: ${isPending ? '#D97706' : '#059669'}; font-weight: 500;">
+            ${isPending ? 'Queued (Offline)' : 'Sealed in Vault'}
+          </span>
           <span>${new Date(item.uploadedAt).toLocaleTimeString()}</span>
         </div>
       `;
@@ -296,13 +413,24 @@ function renderHistory() {
 }
 
 document.getElementById('btn-clear-history')?.addEventListener('click', () => {
-  if (confirm('Clear local capture queue history?')) {
+  const btn = document.getElementById('btn-clear-history');
+  if (btn.dataset.confirming === 'true') {
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       chrome.storage.local.set({ veratrace_history: [] }, renderHistory);
     } else {
       localStorage.removeItem('veratrace_history');
       renderHistory();
     }
+    btn.dataset.confirming = 'false';
+    btn.textContent = 'Clear';
+    showNotification('Local capture queue cleared.', 'info');
+  } else {
+    btn.dataset.confirming = 'true';
+    btn.textContent = 'Confirm?';
+    setTimeout(() => {
+      btn.dataset.confirming = 'false';
+      btn.textContent = 'Clear';
+    }, 4000);
   }
 });
 

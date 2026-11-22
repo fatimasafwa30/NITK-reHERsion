@@ -106,14 +106,24 @@ export function assessEvidenceIntegrity(evidenceId) {
   const uploadTime = new Date(record.upload_timestamp).getTime();
   if (record.capture_timestamp) {
     const captureTime = new Date(record.capture_timestamp).getTime();
-    if (captureTime > uploadTime + 300000) { // 5 minutes buffer for clock skew
+    const driftMs = captureTime - uploadTime;
+
+    if (driftMs > 1800000) { // More than 30 minutes in future
       flags.push({
-        code: 'FUTURE_CAPTURE_TIMESTAMP',
+        code: 'SIGNIFICANT_CLOCK_SKEW',
         severity: 'MEDIUM',
-        title: 'Capture Timestamp Post-Dates Upload Timestamp',
-        reason: 'The client-provided capture timestamp is set in the future relative to the server intake clock. Often caused by an inaccurate device clock.',
+        title: 'Noticeable Device Clock Discrepancy (>30m)',
+        reason: `Device capture timestamp post-dates server receipt clock by ${Math.round(driftMs / 60000)} minutes. Likely caused by incorrect local time zone settings or uncalibrated device clock; not indicative of malicious alteration.`,
       });
-      recommendedSteps.push('Verify the time settings and time zone of the capturing device.');
+      recommendedSteps.push('Check the timezone and system clock configuration on the capturing device.');
+    } else if (driftMs > 60000) { // 1 to 30 minutes in future (normal drift)
+      flags.push({
+        code: 'DEVICE_CLOCK_DRIFT',
+        severity: 'LOW',
+        title: 'Minor Device Clock Drift Observed (<=30m)',
+        reason: `Device capture timestamp is slightly ahead of server intake clock by ${Math.round(driftMs / 1000)} seconds. Standard clock drift across consumer devices is common and does NOT constitute evidence of fabrication.`,
+      });
+      recommendedSteps.push('Confirm device time calibration against network time (NTP).');
     }
   } else {
     flags.push({

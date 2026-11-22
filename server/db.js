@@ -33,9 +33,19 @@ export function getDatabase() {
 
 function initSchema(db) {
   db.exec(`
+    -- Users & Authentication Table
+    CREATE TABLE IF NOT EXISTS users (
+      user_id TEXT PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'USER', -- USER, INVESTIGATOR, ADMIN
+      created_at TEXT NOT NULL
+    );
+
     -- Cases Table
     CREATE TABLE IF NOT EXISTS cases (
       case_id TEXT PRIMARY KEY,
+      owner_id TEXT REFERENCES users(user_id) ON DELETE SET NULL,
       title TEXT NOT NULL,
       summary TEXT,
       status TEXT NOT NULL DEFAULT 'OPEN',
@@ -183,5 +193,26 @@ function initSchema(db) {
       acknowledgement_notes TEXT,
       created_at TEXT NOT NULL
     );
+
+    -- Ed25519-Signed Custody Checkpoints Table
+    CREATE TABLE IF NOT EXISTS custody_checkpoints (
+      checkpoint_id TEXT PRIMARY KEY,
+      case_id TEXT NOT NULL REFERENCES cases(case_id) ON DELETE CASCADE,
+      head_event_hash TEXT NOT NULL,
+      event_count INTEGER NOT NULL,
+      ed25519_public_key TEXT NOT NULL,
+      ed25519_signature TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
   `);
+
+  // Ensure owner_id column exists in pre-existing cases table
+  try {
+    const pragmaCases = db.prepare(`PRAGMA table_info(cases)`).all();
+    if (pragmaCases && !pragmaCases.some((c) => c.name === 'owner_id')) {
+      db.exec(`ALTER TABLE cases ADD COLUMN owner_id TEXT REFERENCES users(user_id) ON DELETE SET NULL;`);
+    }
+  } catch (err) {
+    // Column might already exist
+  }
 }

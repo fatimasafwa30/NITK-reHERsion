@@ -34,10 +34,13 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
   }
 
   const url = endpoint.startsWith('http') ? endpoint : `${BACKEND_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+  const token = typeof window !== 'undefined' ? window.localStorage?.getItem('veratrace_token') : null;
+
   const res = await fetch(url, {
     ...options,
     headers: {
-      'Content-Type': options.body instanceof FormData ? undefined : 'application/json',
+      ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers || {}),
     },
   });

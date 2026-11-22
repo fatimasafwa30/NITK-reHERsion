@@ -7,7 +7,44 @@
  */
 
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { getDatabase } from './db.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DATA_DIR = path.join(__dirname, 'data');
+const PRIV_KEY_FILE = path.join(DATA_DIR, '.custody_ed25519.key');
+const PUB_KEY_FILE = path.join(DATA_DIR, '.custody_ed25519.pub');
+
+let ED25519_KEYPAIR = null;
+
+export function getEd25519KeyPair() {
+  if (ED25519_KEYPAIR) return ED25519_KEYPAIR;
+
+  if (fs.existsSync(PRIV_KEY_FILE) && fs.existsSync(PUB_KEY_FILE)) {
+    const privPem = fs.readFileSync(PRIV_KEY_FILE, 'utf8');
+    const pubPem = fs.readFileSync(PUB_KEY_FILE, 'utf8');
+    const privateKey = crypto.createPrivateKey(privPem);
+    const publicKey = crypto.createPublicKey(pubPem);
+    ED25519_KEYPAIR = { privateKey, publicKey, publicKeyPem: pubPem };
+    return ED25519_KEYPAIR;
+  }
+
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  const privPem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const pubPem = publicKey.export({ type: 'spki', format: 'pem' });
+
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+  fs.writeFileSync(PRIV_KEY_FILE, privPem, { mode: 0o600 });
+  fs.writeFileSync(PUB_KEY_FILE, pubPem, { mode: 0o644 });
+
+  ED25519_KEYPAIR = { privateKey, publicKey, publicKeyPem: pubPem };
+  return ED25519_KEYPAIR;
+}
 
 export const GENESIS_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
 
@@ -178,3 +215,129 @@ export function verifyCaseAuditChain(caseId) {
     verifiedAtUtc: new Date().toISOString(),
   };
 }
+
+/**
+ * Creates and signs an Ed25519 cryptographic checkpoint of the current chain head.
+ * This establishes an external anchor that prevents an attacker with database write
+ * access from rewriting history and sequentially recalculating hashes undetected.
+ */
+export function createCustodyCheckpoint(caseId) {
+  const db = getDatabase();
+  const { privateKey, publicKeyPem } = getEd25519KeyPair();
+
+  // 1. Get latest chain node and event count for this case
+  const headRow = db.prepare(`
+    SELECT current_event_hash 
+    FROM chain_of_custody 
+    WHERE case_id = ? 
+    ORDER BY rowid DESC 
+    LIMIT 1
+  `).get(caseId);
+
+  const countRow = db.prepare(`
+    SELECT COUNT(*) as cnt 
+    FROM chain_of_custody 
+    WHERE case_id = ?
+  `).get(caseId);
+
+  const headEventHash = headRow ? headRow.current_event_hash : GENESIS_HASH;
+  const eventCount = countRow ? countRow.cnt : 0;
+  const checkpointId = `chk_${crypto.randomUUID()}`;
+  const timestampUtc = new Date().toISOString();
+
+  // Canonical checkpoint message to sign
+  const message = `checkpoint|${checkpointId}|${caseId}|${headEventHash}|${eventCount}|${timestampUtc}`;
+  const signature = crypto.sign(null, Buffer.from(message, 'utf8'), privateKey);
+  const signatureHex = signature.toString('hex');
+
+  db.prepare(`
+    INSERT INTO custody_checkpoints (
+      checkpoint_id, case_id, head_event_hash, event_count,
+      ed25519_public_key, ed25519_signature, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    checkpointId,
+    caseId,
+    headEventHash,
+    eventCount,
+    publicKeyPem,
+    signatureHex,
+    timestampUtc
+  );
+
+  return {
+    checkpointId,
+    caseId,
+    headEventHash,
+    eventCount,
+    ed25519PublicKey: publicKeyPem,
+    ed25519Signature: signatureHex,
+    timestampUtc,
+    epistemicScope: 'Cryptographically binds the ledger head to an Ed25519 keypair separate from SQLite database tables. Protects against post-hoc historical rewriting; does not protect if the private key itself is compromised.',
+  };
+}
+
+/**
+ * Verifies an Ed25519-signed custody checkpoint against its public key
+ * and optionally compares it against the live SQLite chain state.
+ */
+export function verifyCustodyCheckpoint(checkpoint, verifyAgainstDatabase = true) {
+  if (!checkpoint || !checkpoint.checkpoint_id && !checkpoint.checkpointId) {
+    throw new Error('Invalid checkpoint record.');
+  }
+
+  const id = checkpoint.checkpoint_id || checkpoint.checkpointId;
+  const cId = checkpoint.case_id || checkpoint.caseId;
+  const headHash = checkpoint.head_event_hash || checkpoint.headEventHash;
+  const count = checkpoint.event_count !== undefined ? checkpoint.event_count : checkpoint.eventCount;
+  const ts = checkpoint.created_at || checkpoint.timestampUtc;
+  const pubPem = checkpoint.ed25519_public_key || checkpoint.ed25519PublicKey;
+  const sigHex = checkpoint.ed25519_signature || checkpoint.ed25519Signature;
+
+  const message = `checkpoint|${id}|${cId}|${headHash}|${count}|${ts}`;
+  const sigBuffer = Buffer.from(sigHex, 'hex');
+
+  let signatureValid = false;
+  try {
+    const publicKey = crypto.createPublicKey(pubPem);
+    signatureValid = crypto.verify(null, Buffer.from(message, 'utf8'), publicKey, sigBuffer);
+  } catch (err) {
+    signatureValid = false;
+  }
+
+  let databaseChainMatches = true;
+  let databaseMismatchReason = null;
+
+  if (verifyAgainstDatabase && signatureValid) {
+    const db = getDatabase();
+    // Verify that the event at that point in the database still has the same hash
+    const rows = db.prepare(`
+      SELECT current_event_hash 
+      FROM chain_of_custody 
+      WHERE case_id = ? 
+      ORDER BY rowid ASC
+    `).all(cId);
+
+    if (rows.length < count) {
+      databaseChainMatches = false;
+      databaseMismatchReason = `Database has fewer events (${rows.length}) than checkpoint recorded (${count}). Chain truncation detected.`;
+    } else {
+      const recordedAtPoint = rows[count - 1]?.current_event_hash;
+      if (recordedAtPoint !== headHash) {
+        databaseChainMatches = false;
+        databaseMismatchReason = `Hash rewrite detected: Checkpoint signed head ${headHash}, but database state at index ${count - 1} has ${recordedAtPoint}.`;
+      }
+    }
+  }
+
+  return {
+    verified: signatureValid && (!verifyAgainstDatabase || databaseChainMatches),
+    signatureValid,
+    databaseChainMatches,
+    databaseMismatchReason,
+    checkpointId: id,
+    caseId: cId,
+    verifiedAtUtc: new Date().toISOString(),
+  };
+}
+
