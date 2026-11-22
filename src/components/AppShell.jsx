@@ -1,7 +1,23 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { Activity, FileDown, FilePlus, FileText, FolderClosed, Layers, ShieldQuestionMark } from 'lucide-react';
+import {
+  Activity,
+  Camera,
+  Clock3,
+  FileDown,
+  FilePlus,
+  FileText,
+  Fingerprint,
+  FolderClosed,
+  Layers,
+  Link2,
+  Lock,
+  Network,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldQuestionMark,
+} from 'lucide-react';
 import { cn } from '../lib/cn';
 import { PageTransition } from '../motion/PageTransition';
 import { RouteChrome } from '../motion/RouteChrome';
@@ -11,14 +27,21 @@ import { Footer } from './Footer';
 import { QuickExitButton } from './QuickExit';
 import { NewCaseDialog } from './NewCaseDialog';
 
-const BASE_NAV = [
-  { to: '/dashboard', label: 'Cases', icon: FolderClosed },
-  { to: '/verify', label: 'Verify', icon: ShieldQuestionMark },
+const CASE_TABS = [
+  { path: '', label: 'Overview', icon: FileText, end: true },
+  { path: '/capture', label: 'Capture', icon: Camera },
+  { path: '/evidence', label: 'Evidence Vault', icon: Layers },
+  { path: '/integrity', label: 'Integrity', icon: Fingerprint },
+  { path: '/analysis', label: 'Intelligence', icon: Network },
+  { path: '/timeline', label: 'Timeline', icon: Clock3 },
+  { path: '/chain-of-custody', label: 'Custody Chain', icon: Link2 },
+  { path: '/dossier', label: 'Dossier', icon: FileDown },
+  { path: '/safety', label: 'Safety Lock', icon: Lock },
 ];
 
 /**
- * App shell: a slim top bar on desktop, a bottom tab bar on mobile.
- * Contextual case navigation appears whenever inside a specific case route.
+ * App shell: a slim top bar on desktop, a contextual case subnav strip,
+ * and a responsive bottom tab bar on mobile.
  */
 export function AppShell() {
   const location = useLocation();
@@ -40,7 +63,7 @@ export function AppShell() {
       </a>
 
       <header
-        className="sticky top-0 z-40 border-b border-lilac bg-ivory/92 backdrop-blur-sm"
+        className="sticky top-0 z-40 border-b border-lilac bg-ivory/95 backdrop-blur-sm"
         data-print="hide"
       >
         <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-4 px-5 sm:px-8">
@@ -59,96 +82,29 @@ export function AppShell() {
               Cases
             </NavLink>
 
-            {activeCaseId ? (
-              <div className="flex items-center gap-1.5 pl-3 border-l border-lilac/70 ml-1">
-                <span className="mono text-[0.6875rem] text-muted font-medium pr-1">
-                  {activeCaseId}
-                </span>
-
-                <NavLink
-                  to={`/case/${activeCaseId}`}
-                  end
-                  className={({ isActive }) =>
-                    cn(
-                      'inline-flex min-h-9 items-center rounded-md px-2.5 text-xs font-medium transition-colors',
-                      isActive
-                        ? 'bg-paper text-violet-deep border border-violet/30 shadow-xs font-semibold'
-                        : 'text-muted hover:text-plum hover:bg-wash/60',
-                    )
-                  }
-                >
-                  Overview
-                </NavLink>
-
-                <NavLink
-                  to={`/case/${activeCaseId}/evidence`}
-                  className={({ isActive }) =>
-                    cn(
-                      'inline-flex min-h-9 items-center rounded-md px-2.5 text-xs font-medium transition-colors',
-                      isActive
-                        ? 'bg-paper text-violet-deep border border-violet/30 shadow-xs font-semibold'
-                        : 'text-muted hover:text-plum hover:bg-wash/60',
-                    )
-                  }
-                >
-                  Evidence
-                </NavLink>
-
-                <NavLink
-                  to={`/case/${activeCaseId}/analysis`}
-                  className={({ isActive }) =>
-                    cn(
-                      'inline-flex min-h-9 items-center gap-1.5 rounded-md px-3 text-xs transition-colors',
-                      isActive
-                        ? 'bg-violet-deep text-white shadow-xs font-semibold'
-                        : 'text-violet-deep bg-wash/60 hover:bg-wash hover:text-plum font-medium border border-lilac/60',
-                    )
-                  }
-                >
-                  <Activity className="size-3.5" aria-hidden="true" />
-                  Pattern Analysis
-                </NavLink>
-
-                <NavLink
-                  to={`/case/${activeCaseId}/dossier`}
-                  className={({ isActive }) =>
-                    cn(
-                      'inline-flex min-h-9 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors',
-                      isActive
-                        ? 'bg-paper text-violet-deep border border-violet/30 shadow-xs font-semibold'
-                        : 'text-muted hover:text-plum hover:bg-wash/60',
-                    )
-                  }
-                >
-                  <FileDown className="size-3.5" aria-hidden="true" />
-                  Dossier
-                </NavLink>
-              </div>
-            ) : (
-              <NavLink
-                to="/verify"
-                className={({ isActive }) =>
-                  cn(
-                    'relative inline-flex min-h-11 items-center rounded-md px-3 text-sm transition-colors duration-150',
-                    isActive ? 'text-plum' : 'text-muted hover:bg-wash/70 hover:text-plum',
-                  )
-                }
-              >
-                {({ isActive }) => (
-                  <>
-                    Verify
-                    {isActive ? (
-                      <motion.span
-                        layoutId="vt-nav-underline"
-                        aria-hidden="true"
-                        className="absolute inset-x-3 -bottom-[13px] h-[2px] rounded-full bg-violet-deep"
-                        transition={{ duration: 0.2, ease: EASE.out }}
-                      />
-                    ) : null}
-                  </>
-                )}
-              </NavLink>
-            )}
+            <NavLink
+              to="/verify"
+              className={({ isActive }) =>
+                cn(
+                  'relative inline-flex min-h-11 items-center rounded-md px-3 text-sm transition-colors duration-150',
+                  isActive ? 'text-plum' : 'text-muted hover:bg-wash/70 hover:text-plum',
+                )
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  Verify
+                  {isActive ? (
+                    <motion.span
+                      layoutId="vt-nav-underline"
+                      aria-hidden="true"
+                      className="absolute inset-x-3 -bottom-[13px] h-[2px] rounded-full bg-violet-deep"
+                      transition={{ duration: 0.2, ease: EASE.out }}
+                    />
+                  ) : null}
+                </>
+              )}
+            </NavLink>
           </nav>
 
           <div className="ml-auto flex items-center gap-2 sm:ml-0">
@@ -164,6 +120,46 @@ export function AppShell() {
           </div>
         </div>
       </header>
+
+      {/* Case Sub-navigation Bar */}
+      {activeCaseId && (
+        <div
+          className="sticky top-16 z-30 border-b border-lilac/80 bg-paper/95 backdrop-blur-sm"
+          data-print="hide"
+          aria-label="Case Sub-navigation"
+        >
+          <div className="mx-auto flex max-w-6xl items-center gap-1.5 overflow-x-auto px-5 py-2 scrollbar-none sm:px-8">
+            <span className="mono shrink-0 rounded border border-lilac bg-wash/80 px-2 py-0.5 text-[0.6875rem] font-bold text-violet-deep">
+              {activeCaseId}
+            </span>
+
+            <div className="h-4 w-px bg-lilac/70 shrink-0 mx-1" />
+
+            {CASE_TABS.map((tab) => {
+              const TabIcon = tab.icon;
+              const targetUrl = `/case/${activeCaseId}${tab.path}`;
+              return (
+                <NavLink
+                  key={tab.path}
+                  to={targetUrl}
+                  end={tab.end}
+                  className={({ isActive }) =>
+                    cn(
+                      'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                      isActive
+                        ? 'bg-violet-deep text-white shadow-xs font-semibold'
+                        : 'text-muted hover:bg-wash hover:text-plum',
+                    )
+                  }
+                >
+                  <TabIcon className="size-3.5 shrink-0" aria-hidden="true" />
+                  <span>{tab.label}</span>
+                </NavLink>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <main id="main" className="flex-1 pb-24 sm:pb-0">
         <PageTransition routeKey={location.pathname} fadeOnly={fadeOnly}>
@@ -217,6 +213,21 @@ export function AppShell() {
 
               <li className="flex-1">
                 <NavLink
+                  to={`/case/${activeCaseId}/capture`}
+                  className={({ isActive }) =>
+                    cn(
+                      'flex min-h-14 flex-col items-center justify-center gap-1 pb-1 pt-2 text-[0.6875rem] font-medium transition-colors',
+                      isActive ? 'text-violet-deep font-semibold' : 'text-muted',
+                    )
+                  }
+                >
+                  <Camera aria-hidden="true" className="size-[18px]" />
+                  Capture
+                </NavLink>
+              </li>
+
+              <li className="flex-1">
+                <NavLink
                   to={`/case/${activeCaseId}/evidence`}
                   className={({ isActive }) =>
                     cn(
@@ -226,7 +237,7 @@ export function AppShell() {
                   }
                 >
                   <Layers aria-hidden="true" className="size-[18px]" />
-                  Evidence
+                  Vault
                 </NavLink>
               </li>
 
@@ -240,8 +251,8 @@ export function AppShell() {
                     )
                   }
                 >
-                  <Activity aria-hidden="true" className="size-[18px]" />
-                  Analysis
+                  <Network aria-hidden="true" className="size-[18px]" />
+                  Intel
                 </NavLink>
               </li>
 

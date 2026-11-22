@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VeraTrace Evidence Intake</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="header">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 32 32" width="22" height="22">
+          <circle cx="16" cy="16" r="14" fill="#2D1436" />
+          <path d="M10 17L14 21L22 11" fill="none" stroke="#E5D9F2" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <span class="brand-name">VeraTrace</span>
+      </div>
+      <span class="badge" id="conn-badge">Local Vault</span>
+    </header>
+
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="tab-capture">Capture</button>
+      <button class="tab-btn" data-tab="tab-review" id="tab-review-btn">Review</button>
+      <button class="tab-btn" data-tab="tab-history">History</button>
+      <button class="tab-btn" data-tab="tab-info">Safety</button>
+    </div>
+
+    <main class="content">
+      <!-- 1. CAPTURE TAB -->
+      <section id="tab-capture" class="tab-pane active">
+        <div class="hero-box">
+          <p class="section-title">Lawful Tab Evidence Capture</p>
+          <p class="section-desc">
+            Instantly capture the visible webpage content on this tab, record the exact URL, and generate a client-side SHA-256 cryptographic digest.
+          </p>
+        </div>
+
+        <div class="active-tab-info">
+          <div class="info-row">
+            <span class="label">Current URL:</span>
+            <span class="value mono" id="page-url">Checking active tab...</span>
+          </div>
+          <div class="info-row">
+            <span class="label">Page Title:</span>
+            <span class="value" id="page-title">—</span>
+          </div>
+        </div>
+
+        <div class="action-stack">
+          <button id="btn-capture-tab" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+              <circle cx="12" cy="13" r="4"></circle>
+            </svg>
+            Capture Visible Tab
+          </button>
+        </div>
+
+        <div id="capture-status" class="status-msg"></div>
+      </section>
+
+      <!-- 2. REVIEW & SUBMIT TAB -->
+      <section id="tab-review" class="tab-pane">
+        <div id="no-capture-placeholder" class="empty-state">
+          <p>No active capture pending review.</p>
+          <button class="btn btn-secondary btn-sm" id="btn-go-capture">Go to Capture</button>
+        </div>
+
+        <div id="review-content" style="display: none;">
+          <div class="preview-card">
+            <img id="preview-img" alt="Captured preview" />
+            <div class="preview-overlay">
+              <span id="preview-hash" class="mono text-xs">SHA-256: Computing...</span>
+            </div>
+          </div>
+
+          <form id="evidence-form" class="form-stack">
+            <div class="field">
+              <label for="case-select">Target VeraTrace Case</label>
+              <select id="case-select" class="input">
+                <option value="VT-DEMO-2026">Case VT-DEMO-2026 (Demo Case)</option>
+              </select>
+            </div>
+
+            <div class="field-row">
+              <div class="field flex-1">
+                <label for="evidence-platform">Platform</label>
+                <select id="evidence-platform" class="input">
+                  <option value="Instagram">Instagram</option>
+                  <option value="WhatsApp">WhatsApp</option>
+                  <option value="Email">Email</option>
+                  <option value="SMS / Text">SMS / Text</option>
+                  <option value="Telegram">Telegram</option>
+                  <option value="Twitter / X">Twitter / X</option>
+                  <option value="Discord">Discord</option>
+                  <option value="Other">Other Web Platform</option>
+                </select>
+              </div>
+              <div class="field flex-1">
+                <label for="sender-handle">Sender / Handle</label>
+                <input type="text" id="sender-handle" class="input" placeholder="@username or handle" />
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="context-notes">Contextual Incident Notes</label>
+              <textarea id="context-notes" class="input textarea" rows="2" placeholder="Explain what occurred (e.g., Unsolicited harassment received after block)"></textarea>
+            </div>
+
+            <div class="btn-group">
+              <button type="button" id="btn-discard" class="btn btn-secondary">Discard</button>
+              <button type="submit" id="btn-upload" class="btn btn-primary">
+                Upload to Vault
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- 3. HISTORY TAB -->
+      <section id="tab-history" class="tab-pane">
+        <div class="history-header">
+          <span class="section-title">Local Evidence Queue</span>
+          <button id="btn-clear-history" class="btn-text">Clear</button>
+        </div>
+        <div id="history-list" class="history-list">
+          <p class="text-muted text-xs">No captures in local history.</p>
+        </div>
+      </section>
+
+      <!-- 4. SAFETY & PERMISSIONS TAB -->
+      <section id="tab-info" class="tab-pane">
+        <div class="legal-box">
+          <p class="font-bold text-plum">Manifest V3 Safety Notice</p>
+          <ul class="legal-list">
+            <li><strong>Minimal Permissions:</strong> Uses <code>activeTab</code> only when you initiate a capture.</li>
+            <li><strong>No Covert Access:</strong> VeraTrace cannot view private messages without your active viewing on screen, access passwords, or bypass web security.</li>
+            <li><strong>No False Claims:</strong> VeraTrace does not and cannot retrieve deleted messages from third-party server databases.</li>
+            <li><strong>Local SHA-256:</strong> Cryptographic hashing is calculated locally before transmission.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span class="mono text-[10px] text-muted">VeraTrace Ingestion v2.0 · Manifest V3</span>
+      <a href="http://localhost:5173/dashboard" target="_blank" class="footer-link">Open Dashboard &rarr;</a>
+    </footer>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

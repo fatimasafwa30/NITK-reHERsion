@@ -57,3 +57,6 @@ export async function sha256File(file, onProgress) {
   if (onProgress) onProgress(1);
   return toHex(digest);
 }
+
+export const calculateSha256 = sha256File;
+

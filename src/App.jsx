@@ -9,10 +9,15 @@ import { AppShell } from './components/AppShell';
 import { Landing } from './pages/Landing';
 import { Dashboard } from './pages/Dashboard';
 import { CaseOverview } from './pages/CaseOverview';
+import { EvidenceCapture } from './pages/EvidenceCapture';
 import { EvidenceStudio } from './pages/EvidenceStudio';
+import { IntegrityAssessment } from './pages/IntegrityAssessment';
 import { CrossPlatformAnalysis } from './pages/CrossPlatformAnalysis';
-import { Verifier } from './pages/Verifier';
+import { CaseTimeline } from './pages/CaseTimeline';
+import { ChainOfCustody } from './pages/ChainOfCustody';
 import { Dossier } from './pages/Dossier';
+import { CaseSafetySettings } from './pages/CaseSafetySettings';
+import { Verifier } from './pages/Verifier';
 import { NotFound } from './pages/NotFound';
 
 function Shell() {
@@ -27,9 +32,14 @@ function Shell() {
       <Route element={<AppShell />}>
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="case/:caseId" element={<CaseOverview />} />
+        <Route path="case/:caseId/capture" element={<EvidenceCapture />} />
         <Route path="case/:caseId/evidence" element={<EvidenceStudio />} />
+        <Route path="case/:caseId/integrity" element={<IntegrityAssessment />} />
         <Route path="case/:caseId/analysis" element={<CrossPlatformAnalysis />} />
+        <Route path="case/:caseId/timeline" element={<CaseTimeline />} />
+        <Route path="case/:caseId/chain-of-custody" element={<ChainOfCustody />} />
         <Route path="case/:caseId/dossier" element={<Dossier />} />
+        <Route path="case/:caseId/safety" element={<CaseSafetySettings />} />
         <Route path="verify" element={<Verifier />} />
         <Route path="*" element={<NotFound />} />
       </Route>
@@ -39,8 +49,6 @@ function Shell() {
 
 export function App() {
   return (
-    // `reducedMotion="user"` makes the library drop every transform animation
-    // when the system asks for less motion, leaving opacity only.
     <MotionConfig reducedMotion="user">
       <BrowserRouter>
         <VeraStoreProvider>

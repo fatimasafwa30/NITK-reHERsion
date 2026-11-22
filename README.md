@@ -58,42 +58,59 @@ VeraTrace provides a structured, trauma-informed digital intake system designed 
 
 ## Key Features
 
-### 1. Evidence Studio & Cryptographic Hashing
-- Drag-and-drop intake for images, PDFs, text chat exports, and audio recordings.
-- Streaming SHA-256 calculation computed client-side using the native `crypto.subtle` Web Crypto API.
-- Binary payloads securely persisted in a browser-isolated IndexedDB vault (`vaultStorage.ts`).
-- Inline visual specimen preview for image captures with investigative metadata notes.
+### 1. Evidence Capture — Chrome Extension & Dual Ingestion
+- **VeraTrace Chrome Extension (Manifest V3):** Companion browser extension that captures visible tabs, automatically extracts target URLs and capture timestamps, computes SHA-256 digests in-browser via Web Crypto API, and uploads or queues captures offline.
+- **Dual Ingestion Mode:** Victim-friendly drag-and-drop dropzone for manual uploads and one-click browser ingestion from paired cases.
+- **Capture vs Upload Separation:** Strictly distinguishes between when the incident actually occurred (`captureTimestamp`) and when the file was ingested into the system (`uploadTimestamp`).
 
-### 2. Cross-Platform Harassment Pattern Analysis
+### 2. Secure Evidence Vault (AES-256-GCM)
+- Authenticated AES-256-GCM encryption at rest for raw original evidence files stored in `server/vault_storage/`.
+- Strict Version 1 immutability: Original ingested files are permanent and never modified.
+- Working copy management: Redactions, blurs, and annotations are stored as separate versioned artifacts (e.g. Version 2) with lineage tracking.
+- Cryptographic integrity verification on retrieval against the recorded intake hash.
+
+### 3. Evidence Integrity & Credibility Assessment Engine
+- Explainable, 5-tier evidence classification:
+  - `CAPTURED`: Live browser capture via verified extension.
+  - `USER_SUBMITTED`: Uploaded via manual intake awaiting deep analysis.
+  - `INTEGRITY_VERIFIED`: Unbroken SHA-256 match and consistent metadata.
+  - `REVIEW_REQUIRED`: Discrepancies noted (e.g., missing EXIF, cropped borders, timestamp skew).
+  - `INTEGRITY_COMPROMISED`: Hash mismatch or confirmed byte-level alteration.
+- Transparent forensic recommendations and human investigator review recording.
+- Clear epistemic boundaries: Explicitly notes that absence of metadata (common in messaging app compression) does not imply fabrication.
+
+### 4. Cross-Platform Harassment Pattern Analysis & Intelligence
 - Correlates evidence and timeline incidents across disparate communication channels (WhatsApp, Instagram, Email, SMS, Phone/Voicemail, and Other).
-- Detects shared handles, phone numbers, URLs, and repeated phrases across accounts.
-- Identifies **contact resumed after blocking**, highlighting deliberate block evasion.
-- Computes behavioral indicators: multi-platform spread, contact velocity, and off-hours communication patterns.
+- Multi-signal correlation: shared handles, phone numbers, recurring phrases, media hash matching, and temporal block-bypass contact.
+- Interactive Relationship Graph connecting platforms, sender handles, shared clues, timeline events, and evidence files.
+- Evaluates behavioral cadence, off-hours contact (10 PM – 6 AM), and escalating velocity.
+- Human review audit logging: Investigators can mark relationships as `VERIFIED_RELATIONSHIP`, `SUSPECTED_RELATIONSHIP`, or `UNVERIFIED_COINCIDENCE`.
 
-### 3. Interactive Relationship Graph
-- SVG-based network graph visualizing connections between platforms, sender accounts, shared clues, timeline incidents, and evidence files.
-- Interactive category filtering to isolate specific entity types.
-- Highlights evidence-linked hubs to expose persistent multi-channel actors.
+### 5. Immutable & Tamper-Evident Chain of Custody
+- Cryptographic append-only audit ledger where each event is hash-linked to the preceding event hash (Genesis block: 64 zeros).
+- Complete lifecycle tracking: case creation, evidence ingestion, vault access, redaction creation, preservation lock toggles, and export generation.
+- One-click cryptographic verification of the complete custody chain.
 
-### 4. Forensic Timeline with Uncertainty Handling
-- Chronological ordering of events with clear demarcation between confirmed dates and approximate recollections.
-- Direct linking between timeline events and sealed evidence files.
-- Refuses to invent timestamps: events with approximate times are explicitly badged as `Date uncertain` to protect legal credibility.
+### 6. Evidence Deletion & Preservation Protection
+- **Preservation Lock:** Active legal hold preventing ordinary users or suspects from silently modifying or deleting evidence files.
+- Rejection auditing: Deletion attempts while locked return HTTP 403 and are permanently logged into the immutable chain of custody.
+- Disappearance and deletion tracking for vanishing messages and unsend events.
 
-### 5. Evidence Dossier & Export Engine
+### 7. Evidence Dossier & Export Engine
 - **Printable Legal Dossier:** High-density, professional document layout with case particulars, verification statistics, forensic timeline, and cryptographic ledger.
 - **PDF Compilation (`exportDossierPdf`):** Exports a downloadable, standardized PDF dossier with Section 63 BSA certificate drafts.
 - **Evidence ZIP Vault (`exportEvidenceZip`):** Packages all original preserved binary evidence files alongside a signed JSON manifest and statutory text certificates.
 - **Direct Cybercrime Handoff:** Provides verified links to India's National Cyber Crime Reporting Portal (`cybercrime.gov.in`) and the National Cybercrime Helpline (`1930`).
 
-### 6. Standalone Integrity Verifier
+### 8. Standalone Integrity Verifier
 - Dedicated `/verify` route allowing anyone to check two files side-by-side or re-verify an existing file against its recorded SHA-256 hash.
 - Clear visual match/mismatch indicators with eight-character hash block formatting for human readability.
 
-### 7. Global Quick Exit & Safety Controls
+### 9. Global Quick Exit & Safety Controls
 - Fixed Quick Exit button in header and mobile tab bar.
 - Global `Escape` key capture phase listener active across all views and open dialogs.
 - Leaves immediately for a neutral website (`weather.com`) without showing confirmation prompts or deleting preserved records.
+- Emergency Backup export and revocable Trusted Contacts support.
 
 ---
 
@@ -202,7 +219,7 @@ flowchart TD
 - **Node.js:** v18.0.0 or higher (v20+ recommended)
 - **npm:** v9.0.0 or higher
 
-### Installation
+### Installation & Running
 
 1. Clone the repository:
    ```bash
@@ -215,15 +232,29 @@ flowchart TD
    npm install
    ```
 
-3. Start the Vite development server:
+3. (Optional) Start the Backend Server (Express + AES-256-GCM Vault + SQLite WAL):
+   ```bash
+   npm run server
+   ```
+   *Runs on `http://localhost:4000`. If offline or running standalone on Vercel, the application automatically operates in local client-vault mode via IndexedDB & Web Crypto.*
+
+4. Start the Vite frontend development server:
    ```bash
    npm run dev
    ```
 
-4. Open your browser and navigate to:
+5. Open your browser and navigate to:
    ```text
    http://localhost:5173/
    ```
+
+### Loading the Chrome Extension Companion (Manifest V3)
+
+1. Open Google Chrome or Microsoft Edge and navigate to `chrome://extensions/`.
+2. Turn on **Developer mode** using the toggle switch in the top-right corner.
+3. Click **Load unpacked** in the top-left toolbar.
+4. Select the `extension/` directory from this repository.
+5. Pin the **VeraTrace Seal** icon in your browser toolbar to capture visible tabs, preserve URLs, and ingest directly into active cases.
 
 ---
 
@@ -237,30 +268,40 @@ VeraTrace comes pre-configured with a comprehensive, realistic demo case: **Case
 
 1. **Load the Demo:** Open the Dashboard and click **"Load Demo Case"** in the top header.
 2. **Review Case Overview (`/case/VT-DEMO-2026`):**
-   - Inspect the **Core Analysis & Forensic Intelligence** preview banner.
-   - Observe the 4-step workflow journey navigation bar.
-3. **Inspect the Evidence Studio (`/case/VT-DEMO-2026/evidence`):**
+   - Inspect the **Pillars Quick Access** and **Forensic Intelligence** overview.
+   - Observe the 9-pillar case navigation sub-bar (Overview, Capture, Vault, Integrity, Intel, Timeline, Custody, Dossier, Safety).
+3. **Capture Evidence (`/case/VT-DEMO-2026/capture`):**
+   - Pair with the Chrome Extension or ingest screenshot files with client-side SHA-256 calculation.
+4. **Inspect the Evidence Vault (`/case/VT-DEMO-2026/evidence`):**
    - View 5 pre-loaded sealed evidence files across WhatsApp, Instagram, SMS, and HR records.
    - Click any item to inspect its SHA-256 hash, MIME type, preview artifact thumbnail, and investigative notes.
-4. **Analyze Patterns (`/case/VT-DEMO-2026/analysis`):**
+5. **Run Evidence Integrity & Credibility Assessment (`/case/VT-DEMO-2026/integrity`):**
+   - Inspect 5-tier explainable classifications (`INTEGRITY_VERIFIED`, `CAPTURED`, `REVIEW_REQUIRED`).
+   - Review transparent forensic recommendations and submit reviewer findings.
+6. **Analyze Patterns & Intelligence (`/case/VT-DEMO-2026/analysis`):**
    - Interact with the **Cross-Platform Relationship Graph**: click entity tags (Platforms, Accounts, Clues, Evidence Files, Incidents) to filter connected nodes.
    - Review the **Early-Risk Assessment**: observe detected multi-channel spread, off-hours contact, and the explicitly flagged **contact resumed after block** event.
-5. **Export the Dossier (`/case/VT-DEMO-2026/dossier`):**
+7. **Inspect Immutable Chain of Custody (`/case/VT-DEMO-2026/chain-of-custody`):**
+   - Verify the cryptographic hash-linked ledger and run live integrity checks.
+8. **Export the Dossier (`/case/VT-DEMO-2026/dossier`):**
    - Click **"Export PDF"** to compile the legal dossier.
    - Click **"Download ZIP"** to bundle all original files, checksums, and the Section 63 BSA draft.
    - Review Section 06 (BSA 2023 Statutory Certificate preparation) and Section 07 (Cybercrime portal submission guide).
+9. **Configure Safety & Preservation Lock (`/case/VT-DEMO-2026/safety`):**
+   - Enable the Preservation Lock to legally freeze files and reject deletion requests.
+   - Log disappeared messages and register trusted contacts.
 
 ---
 
 ## Testing & Production Build
 
 ### Running the Test Suite
-The repository includes unit, service, forensic, and UI integration test suites executed with Vitest:
+The repository includes unit, service, forensic, backend vault, and UI integration test suites executed with Vitest:
 
 ```bash
 npm test
 ```
-*Current test suite status: 23 test files passed, 281 tests passed (0 failures).*
+*Current test suite status: 24 test files passed, 288 tests passed (0 failures).*
 
 ### Building for Production
 To generate the optimized production build:
@@ -268,6 +309,7 @@ To generate the optimized production build:
 ```bash
 npm run build
 ```
+Compiled assets are output to the `dist/` directory.
 Compiled assets are output to the `dist/` directory.
 
 ### Previewing the Production Build

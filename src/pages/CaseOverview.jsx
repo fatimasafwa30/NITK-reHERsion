@@ -127,23 +127,60 @@ export function CaseOverview({ onAddEvidence, onAddTimelineEvent } = {}) {
         </div>
       </header>
 
-      {/* Workflow Navigation Banner */}
-      <div className="mt-6 flex flex-wrap items-center gap-2 rounded-lg border border-lilac/70 bg-wash/50 px-4 py-3 text-xs text-plum">
-        <span className="mono font-semibold uppercase tracking-wider text-muted mr-1">Journey:</span>
-        <span className="rounded border border-violet-deep/30 bg-paper px-2 py-0.5 font-semibold text-violet-deep shadow-xs">
-          1. Case Overview
-        </span>
-        <ArrowRight className="size-3 text-lilac shrink-0" aria-hidden="true" />
-        <Link to={`/case/${record.caseId}/evidence`} className="rounded px-2 py-0.5 text-muted hover:text-plum hover:bg-paper">
-          2. Add Evidence
+      {/* Platform Pillars Quick Access */}
+      <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6 text-xs">
+        <Link
+          to={`/case/${record.caseId}/capture`}
+          className="flex flex-col gap-1 rounded-md border border-lilac/80 bg-paper p-3 text-plum transition-all hover:border-violet-deep hover:shadow-xs"
+        >
+          <span className="mono text-[0.625rem] font-bold uppercase tracking-wider text-muted">Pillar 1</span>
+          <span className="font-semibold text-violet-deep">Evidence Capture</span>
+          <span className="text-[0.6875rem] text-muted">Extension & Ingest</span>
         </Link>
-        <ArrowRight className="size-3 text-lilac shrink-0" aria-hidden="true" />
-        <Link to={`/case/${record.caseId}/analysis`} className="rounded px-2 py-0.5 text-muted hover:text-plum hover:bg-paper">
-          3. Analyse Patterns
+
+        <Link
+          to={`/case/${record.caseId}/evidence`}
+          className="flex flex-col gap-1 rounded-md border border-lilac/80 bg-paper p-3 text-plum transition-all hover:border-violet-deep hover:shadow-xs"
+        >
+          <span className="mono text-[0.625rem] font-bold uppercase tracking-wider text-muted">Pillar 2</span>
+          <span className="font-semibold text-violet-deep">Secure Vault</span>
+          <span className="text-[0.6875rem] text-muted">Encrypted & Redacted</span>
         </Link>
-        <ArrowRight className="size-3 text-lilac shrink-0" aria-hidden="true" />
-        <Link to={`/case/${record.caseId}/dossier`} className="rounded px-2 py-0.5 text-muted hover:text-plum hover:bg-paper font-medium">
-          4. Export Dossier
+
+        <Link
+          to={`/case/${record.caseId}/integrity`}
+          className="flex flex-col gap-1 rounded-md border border-lilac/80 bg-paper p-3 text-plum transition-all hover:border-violet-deep hover:shadow-xs"
+        >
+          <span className="mono text-[0.625rem] font-bold uppercase tracking-wider text-muted">Pillar 3</span>
+          <span className="font-semibold text-violet-deep">Integrity Engine</span>
+          <span className="text-[0.6875rem] text-muted">5-Tier Assessment</span>
+        </Link>
+
+        <Link
+          to={`/case/${record.caseId}/analysis`}
+          className="flex flex-col gap-1 rounded-md border border-lilac/80 bg-paper p-3 text-plum transition-all hover:border-violet-deep hover:shadow-xs"
+        >
+          <span className="mono text-[0.625rem] font-bold uppercase tracking-wider text-muted">Pillar 4</span>
+          <span className="font-semibold text-violet-deep">Intelligence</span>
+          <span className="text-[0.6875rem] text-muted">Cross-Platform Graph</span>
+        </Link>
+
+        <Link
+          to={`/case/${record.caseId}/chain-of-custody`}
+          className="flex flex-col gap-1 rounded-md border border-lilac/80 bg-paper p-3 text-plum transition-all hover:border-violet-deep hover:shadow-xs"
+        >
+          <span className="mono text-[0.625rem] font-bold uppercase tracking-wider text-muted">Pillar 5</span>
+          <span className="font-semibold text-violet-deep">Custody Chain</span>
+          <span className="text-[0.6875rem] text-muted">Tamper-Evident Ledger</span>
+        </Link>
+
+        <Link
+          to={`/case/${record.caseId}/safety`}
+          className="flex flex-col gap-1 rounded-md border border-lilac/80 bg-paper p-3 text-plum transition-all hover:border-violet-deep hover:shadow-xs"
+        >
+          <span className="mono text-[0.625rem] font-bold uppercase tracking-wider text-muted">Safety</span>
+          <span className="font-semibold text-violet-deep">Preservation Lock</span>
+          <span className="text-[0.6875rem] text-muted">Deletion Protection</span>
         </Link>
       </div>
 
