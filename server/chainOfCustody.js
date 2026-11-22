@@ -163,6 +163,7 @@ export function verifyCaseAuditChain(caseId) {
   if (rows.length === 0) {
     return {
       verified: true,
+      valid: true,
       count: 0,
       message: 'No audit records for this case yet.',
       breakages: [],
@@ -209,6 +210,7 @@ export function verifyCaseAuditChain(caseId) {
 
   return {
     verified: breakages.length === 0,
+    valid: breakages.length === 0,
     count: rows.length,
     latestHash: expectedPrevHash,
     breakages,
@@ -278,11 +280,23 @@ export function createCustodyCheckpoint(caseId) {
 }
 
 /**
- * Verifies an Ed25519-signed custody checkpoint against its public key
- * and optionally compares it against the live SQLite chain state.
+ * Computes deterministic SHA-256 fingerprint of an Ed25519 public key PEM.
  */
-export function verifyCustodyCheckpoint(checkpoint, verifyAgainstDatabase = true) {
-  if (!checkpoint || !checkpoint.checkpoint_id && !checkpoint.checkpointId) {
+export function computeKeyFingerprint(publicKeyPem) {
+  if (!publicKeyPem) return null;
+  return crypto.createHash('sha256').update(publicKeyPem.trim()).digest('hex');
+}
+
+/**
+ * Verifies an Ed25519-signed custody checkpoint against a TRUSTED public key or pinned fingerprint.
+ * Prevents Public Key Substitution attacks by refusing to trust keys embedded in unverified checkpoints.
+ *
+ * @param {object} checkpoint - Checkpoint object
+ * @param {boolean} verifyAgainstDatabase - Check if SQLite chain matches checkpoint
+ * @param {object|string} trustedKeyOptions - Trusted PEM string or options object { trustedPublicKeyPem, trustedFingerprints, allowUntrusted }
+ */
+export function verifyCustodyCheckpoint(checkpoint, verifyAgainstDatabase = true, trustedKeyOptions = null) {
+  if (!checkpoint || (!checkpoint.checkpoint_id && !checkpoint.checkpointId)) {
     throw new Error('Invalid checkpoint record.');
   }
 
@@ -293,6 +307,49 @@ export function verifyCustodyCheckpoint(checkpoint, verifyAgainstDatabase = true
   const ts = checkpoint.created_at || checkpoint.timestampUtc;
   const pubPem = checkpoint.ed25519_public_key || checkpoint.ed25519PublicKey;
   const sigHex = checkpoint.ed25519_signature || checkpoint.ed25519Signature;
+
+  if (!pubPem || !sigHex) {
+    throw new Error('Checkpoint is missing public key or cryptographic signature.');
+  }
+
+  // Determine trusted keys and fingerprints
+  let trustedPem = null;
+  let trustedFingerprints = [];
+  let allowUntrusted = false;
+
+  if (typeof trustedKeyOptions === 'string') {
+    trustedPem = trustedKeyOptions;
+  } else if (trustedKeyOptions && typeof trustedKeyOptions === 'object') {
+    trustedPem = trustedKeyOptions.trustedPublicKeyPem || null;
+    trustedFingerprints = trustedKeyOptions.trustedFingerprints || [];
+    allowUntrusted = Boolean(trustedKeyOptions.allowUntrusted);
+  }
+
+  // If no trusted key specified, default to the official local VeraTrace custody public key
+  if (!trustedPem && trustedFingerprints.length === 0) {
+    try {
+      const defaultPair = getEd25519KeyPair();
+      trustedPem = defaultPair.publicKeyPem;
+    } catch {
+      // Keypair not yet generated
+    }
+  }
+
+  const checkpointKeyFingerprint = computeKeyFingerprint(pubPem);
+  let keyTrusted = false;
+  let untrustedKeyWarning = null;
+
+  if (trustedPem && pubPem.trim() === trustedPem.trim()) {
+    keyTrusted = true;
+  } else if (trustedFingerprints.length > 0 && trustedFingerprints.includes(checkpointKeyFingerprint)) {
+    keyTrusted = true;
+  } else if (allowUntrusted) {
+    keyTrusted = false;
+    untrustedKeyWarning = 'WARNING: Public key is untrusted but explicitly permitted by allowUntrusted flag.';
+  } else {
+    keyTrusted = false;
+    untrustedKeyWarning = 'CRITICAL SECURITY ALERT: Checkpoint public key is UNTRUSTED or substituted! The key does not match the server authority or pinned fingerprint list. Verification rejected.';
+  }
 
   const message = `checkpoint|${id}|${cId}|${headHash}|${count}|${ts}`;
   const sigBuffer = Buffer.from(sigHex, 'hex');
@@ -308,7 +365,7 @@ export function verifyCustodyCheckpoint(checkpoint, verifyAgainstDatabase = true
   let databaseChainMatches = true;
   let databaseMismatchReason = null;
 
-  if (verifyAgainstDatabase && signatureValid) {
+  if (verifyAgainstDatabase && signatureValid && keyTrusted) {
     const db = getDatabase();
     // Verify that the event at that point in the database still has the same hash
     const rows = db.prepare(`
@@ -321,6 +378,11 @@ export function verifyCustodyCheckpoint(checkpoint, verifyAgainstDatabase = true
     if (rows.length < count) {
       databaseChainMatches = false;
       databaseMismatchReason = `Database has fewer events (${rows.length}) than checkpoint recorded (${count}). Chain truncation detected.`;
+    } else if (count === 0) {
+      if (headHash !== GENESIS_HASH) {
+        databaseChainMatches = false;
+        databaseMismatchReason = `Expected genesis hash for empty ledger, found ${headHash}.`;
+      }
     } else {
       const recordedAtPoint = rows[count - 1]?.current_event_hash;
       if (recordedAtPoint !== headHash) {
@@ -330,10 +392,15 @@ export function verifyCustodyCheckpoint(checkpoint, verifyAgainstDatabase = true
     }
   }
 
+  const overallVerified = signatureValid && keyTrusted && (!verifyAgainstDatabase || databaseChainMatches);
+
   return {
-    verified: signatureValid && (!verifyAgainstDatabase || databaseChainMatches),
+    verified: overallVerified,
     signatureValid,
-    databaseChainMatches,
+    keyTrusted,
+    keyFingerprint: checkpointKeyFingerprint,
+    untrustedKeyWarning,
+    databaseChainMatches: keyTrusted ? databaseChainMatches : false,
     databaseMismatchReason,
     checkpointId: id,
     caseId: cId,

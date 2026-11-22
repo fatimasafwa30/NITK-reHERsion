@@ -14,6 +14,90 @@ const API_BASE = 'http://localhost:4000/api';
 let currentCapture = null;
 let activeTab = null;
 
+// Auth / Extension Storage Helpers
+async function getStoredAuth() {
+  return new Promise((resolve) => {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.get(['veratrace_extension_token', 'veratrace_paired_user'], (res) => {
+        resolve({
+          token: res.veratrace_extension_token || null,
+          user: res.veratrace_paired_user || null,
+        });
+      });
+    } else {
+      resolve({
+        token: localStorage.getItem('veratrace_extension_token'),
+        user: JSON.parse(localStorage.getItem('veratrace_paired_user') || 'null'),
+      });
+    }
+  });
+}
+
+async function setStoredAuth(token, user) {
+  return new Promise((resolve) => {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ veratrace_extension_token: token, veratrace_paired_user: user }, resolve);
+    } else {
+      localStorage.setItem('veratrace_extension_token', token);
+      localStorage.setItem('veratrace_paired_user', JSON.stringify(user));
+      resolve();
+    }
+  });
+}
+
+async function clearStoredAuth() {
+  return new Promise((resolve) => {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.remove(['veratrace_extension_token', 'veratrace_paired_user'], resolve);
+    } else {
+      localStorage.removeItem('veratrace_extension_token');
+      localStorage.removeItem('veratrace_paired_user');
+      resolve();
+    }
+  });
+}
+
+function parseTokenPayload(token) {
+  try {
+    const part = token.split('.')[1];
+    let base64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    while (base64.length % 4) base64 += '=';
+    return JSON.parse(atob(base64));
+  } catch {
+    return null;
+  }
+}
+
+async function updatePairingUi() {
+  const auth = await getStoredAuth();
+  const unpairedView = document.getElementById('unpaired-view');
+  const pairedView = document.getElementById('paired-view');
+  const badge = document.getElementById('conn-badge');
+
+  if (auth.token && auth.user) {
+    if (unpairedView) unpairedView.style.display = 'none';
+    if (pairedView) pairedView.style.display = 'block';
+    const userEl = document.getElementById('paired-username');
+    const credEl = document.getElementById('paired-cred-id');
+    if (userEl) userEl.textContent = `@${auth.user.username || 'User'}`;
+    if (credEl) credEl.textContent = auth.user.credentialId || 'Scoped Token';
+
+    if (badge) {
+      badge.textContent = `Paired: @${auth.user.username}`;
+      badge.style.backgroundColor = '#ECFDF5';
+      badge.style.color = '#065F46';
+    }
+  } else {
+    if (unpairedView) unpairedView.style.display = 'block';
+    if (pairedView) pairedView.style.display = 'none';
+    if (badge) {
+      badge.textContent = 'Unpaired (Auth Required)';
+      badge.style.backgroundColor = '#FEF3C7';
+      badge.style.color = '#92400E';
+    }
+  }
+}
+
 // Tab Switching
 document.querySelectorAll('.tab-btn').forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -72,6 +156,7 @@ async function initActiveTab() {
     pageUrlEl.textContent = 'Unable to query tab';
   }
 
+  await updatePairingUi();
   fetchCases();
   renderHistory();
 }
@@ -89,11 +174,17 @@ function detectPlatformFromUrl(url = '') {
   else select.value = 'Other';
 }
 
-// Fetch active cases from VeraTrace API
+// Fetch active cases from VeraTrace API with Authentication
 async function fetchCases() {
   const select = document.getElementById('case-select');
+  const auth = await getStoredAuth();
+  const headers = {};
+  if (auth.token) {
+    headers['Authorization'] = `Bearer ${auth.token}`;
+  }
+
   try {
-    const res = await fetch(`${API_BASE}/cases`);
+    const res = await fetch(`${API_BASE}/cases`, { headers });
     if (res.ok) {
       const data = await res.json();
       if (data.cases && data.cases.length > 0) {
@@ -104,17 +195,65 @@ async function fetchCases() {
           opt.textContent = `${c.title} (${c.case_id})`;
           select.appendChild(opt);
         });
-        document.getElementById('conn-badge').textContent = 'Vault Connected';
-        document.getElementById('conn-badge').style.backgroundColor = '#ECFDF5';
-        document.getElementById('conn-badge').style.color = '#065F46';
+        const badge = document.getElementById('conn-badge');
+        if (badge) {
+          badge.textContent = auth.user ? `Paired: @${auth.user.username}` : 'Vault Connected';
+          badge.style.backgroundColor = '#ECFDF5';
+          badge.style.color = '#065F46';
+        }
         return;
+      }
+    } else if (res.status === 401 || res.status === 403) {
+      const badge = document.getElementById('conn-badge');
+      if (badge) {
+        badge.textContent = 'Auth Required (Pair Extension)';
+        badge.style.backgroundColor = '#FEF2F2';
+        badge.style.color = '#991B1B';
       }
     }
   } catch (err) {
     // Backend offline / standalone mode
-    document.getElementById('conn-badge').textContent = 'Offline Vault';
+    const badge = document.getElementById('conn-badge');
+    if (badge) badge.textContent = 'Offline Vault';
   }
 }
+
+// Pairing action event listeners
+document.getElementById('btn-save-pairing')?.addEventListener('click', async () => {
+  const input = document.getElementById('pairing-token-input');
+  const token = input?.value?.trim();
+  if (!token) {
+    showNotification('Please paste a valid extension pairing token.', 'error');
+    return;
+  }
+
+  const payload = parseTokenPayload(token);
+  if (!payload || !payload.userId) {
+    showNotification('Invalid token structure. Please copy a valid scoped token.', 'error');
+    return;
+  }
+
+  const userObj = {
+    userId: payload.userId,
+    username: payload.username || 'User',
+    credentialId: payload.credentialId || 'token',
+    expiresAt: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
+  };
+
+  await setStoredAuth(token, userObj);
+  if (input) input.value = '';
+  await updatePairingUi();
+  await fetchCases();
+  showNotification(`Successfully paired with VeraTrace as @${userObj.username}!`, 'success');
+  document.querySelector('[data-tab="tab-capture"]')?.click();
+});
+
+document.getElementById('btn-unpair')?.addEventListener('click', async () => {
+  await clearStoredAuth();
+  await updatePairingUi();
+  await fetchCases();
+  showNotification('Extension disconnected and local credentials removed.', 'info');
+});
 
 // 1. Capture Visible Tab Action
 document.getElementById('btn-capture-tab')?.addEventListener('click', async () => {
@@ -185,7 +324,7 @@ function showNotification(message, type = 'info', durationMs = 5000) {
   }, durationMs);
 }
 
-// 2. Upload to VeraTrace API
+// 2. Upload to VeraTrace API with Scoped Token Authentication
 document.getElementById('evidence-form')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (!currentCapture) return;
@@ -199,6 +338,15 @@ document.getElementById('evidence-form')?.addEventListener('submit', async (e) =
   const senderHandle = document.getElementById('sender-handle').value;
   const notes = document.getElementById('context-notes').value;
 
+  const auth = await getStoredAuth();
+  if (!auth.token) {
+    showNotification('Authentication Required: Pair this extension in the Pairing tab before uploading.', 'error', 6000);
+    btnUpload.disabled = false;
+    btnUpload.textContent = 'Upload to Vault';
+    document.getElementById('tab-pairing-btn')?.click();
+    return;
+  }
+
   const formData = new FormData();
   formData.append('file', currentCapture.blob, `capture_${Date.now()}.png`);
   formData.append('submissionSource', 'EXTENSION_CAPTURE');
@@ -209,9 +357,14 @@ document.getElementById('evidence-form')?.addEventListener('submit', async (e) =
   formData.append('senderHandle', senderHandle);
   formData.append('notes', notes);
 
+  const headers = {
+    Authorization: `Bearer ${auth.token}`,
+  };
+
   try {
     const res = await fetch(`${API_BASE}/cases/${caseId}/evidence`, {
       method: 'POST',
+      headers,
       body: formData,
     });
 
@@ -229,6 +382,29 @@ document.getElementById('evidence-form')?.addEventListener('submit', async (e) =
 
       showNotification(`Evidence sealed in Vault! Evidence ID: ${data.evidence.evidence_id} (SHA-256: ${currentCapture.sha256.slice(0, 16)}...)`, 'success', 6000);
 
+      currentCapture = null;
+      document.getElementById('no-capture-placeholder').style.display = 'block';
+      document.getElementById('review-content').style.display = 'none';
+      document.querySelector('[data-tab="tab-history"]').click();
+    } else if (res.status === 401 || res.status === 403) {
+      const errJson = await res.json().catch(() => ({}));
+      showNotification(`Upload Rejected (${res.status}): ${errJson.error || 'Extension token revoked or unauthorized.'}`, 'error', 8000);
+      // Preserve capture in local queue with base64 dataUrl so evidence is never lost
+      const offlineId = `offline_${Date.now()}`;
+      saveToLocalHistory({
+        evidenceId: offlineId,
+        filename: `capture_${Date.now()}.png`,
+        sha256: currentCapture.sha256,
+        url: currentCapture.url,
+        caseId,
+        platform,
+        senderHandle,
+        notes,
+        captureTimestamp: currentCapture.captureTimestamp,
+        dataUrl: currentCapture.dataUrl,
+        uploadedAt: new Date().toISOString(),
+        status: 'SAVED_LOCALLY_PENDING_SYNC',
+      });
       currentCapture = null;
       document.getElementById('no-capture-placeholder').style.display = 'block';
       document.getElementById('review-content').style.display = 'none';
@@ -276,6 +452,14 @@ async function syncPendingCaptures() {
     statusEl.textContent = 'Checking pending queue for retries...';
   }
 
+  const auth = await getStoredAuth();
+  if (!auth.token) {
+    if (statusEl) statusEl.textContent = 'Extension unpaired: pairing token required before synchronizing queue.';
+    showNotification('Pair extension before synchronizing pending captures.', 'error');
+    if (syncBtn) syncBtn.disabled = false;
+    return;
+  }
+
   const getItems = () =>
     new Promise((resolve) => {
       if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
@@ -320,8 +504,13 @@ async function syncPendingCaptures() {
       formData.append('senderHandle', item.senderHandle || '');
       formData.append('notes', item.notes || 'Synced from offline queue');
 
+      const headers = {
+        Authorization: `Bearer ${auth.token}`,
+      };
+
       const res = await fetch(`${API_BASE}/cases/${item.caseId || 'VT-DEMO-2026'}/evidence`, {
         method: 'POST',
+        headers,
         body: formData,
       });
 
@@ -329,9 +518,13 @@ async function syncPendingCaptures() {
         const data = await res.json();
         item.status = 'SEALED_IN_VAULT';
         item.evidenceId = data.evidence?.evidence_id || item.evidenceId;
-        delete item.dataUrl; // Free storage memory once safely ingested
+        delete item.dataUrl; // Free storage memory once safely ingested and verified by server ACK
         item.syncedAt = new Date().toISOString();
         syncedCount++;
+      } else if (res.status === 401 || res.status === 403) {
+        item.in_flight = false;
+        showNotification(`Sync paused: Extension token revoked or expired. Please re-pair extension.`, 'error');
+        break;
       }
     } catch (err) {
       // Server still offline; keep in queue for next retry

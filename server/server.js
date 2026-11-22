@@ -26,12 +26,16 @@ import {
   calculateSha256,
   encryptBackup,
   decryptBackup,
+  decryptBuffer,
+  VAULT_DIR,
 } from './vault.js';
 import {
   recordCustodyEvent,
   verifyCaseAuditChain,
   createCustodyCheckpoint,
   verifyCustodyCheckpoint,
+  computeKeyFingerprint,
+  getEd25519KeyPair,
   CUSTODY_ACTIONS,
 } from './chainOfCustody.js';
 import {
@@ -46,6 +50,10 @@ import {
   hashPassword,
   verifyPassword,
   issueToken,
+  issueExtensionToken,
+  revokeToken,
+  revokeExtensionCredential,
+  isTokenRevoked,
   requireAuth,
   optionalAuth,
 } from './auth.js';
@@ -79,7 +87,7 @@ export function createServer() {
       origin: (origin, callback) => {
         // Allow requests with no origin (such as mobile apps, curl, or server-side test runners)
         if (!origin) return callback(null, true);
-        if (configuredOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+        if (configuredOrigins.includes(origin)) {
           return callback(null, true);
         }
         return callback(new Error(`CORS Policy: Origin ${origin} not allowed by Access-Control-Allow-Origin.`));
@@ -90,6 +98,14 @@ export function createServer() {
     })
   );
 
+  // Custom CORS rejection handler so callers receive 403 Forbidden
+  app.use((err, req, res, next) => {
+    if (err && err.message && err.message.startsWith('CORS Policy:')) {
+      return res.status(403).json({ error: err.message });
+    }
+    next(err);
+  });
+
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -99,7 +115,8 @@ export function createServer() {
     limits: { fileSize: 100 * 1024 * 1024 },
   });
 
-  // Rate Limiters
+  // Dedicated Rate Limiters
+  const authLimiter = createRateLimiter({ windowMs: 60000, maxRequests: 10, message: 'Too many authentication attempts. Please try again in a minute.' });
   const uploadLimiter = createRateLimiter({ windowMs: 60000, maxRequests: 60, message: 'Upload rate limit exceeded. Please wait a minute.' });
   const decryptionLimiter = createRateLimiter({ windowMs: 60000, maxRequests: 120, message: 'Evidence decryption rate limit exceeded. Please wait a minute.' });
   const backupLimiter = createRateLimiter({ windowMs: 60000, maxRequests: 10, message: 'Backup rate limit exceeded.' });
@@ -122,8 +139,13 @@ export function createServer() {
     }
 
     // Tenant / Owner enforcement
-    // If case has an owner_id, caller must match owner_id (or be ADMIN)
-    if (c.owner_id && req.user && req.user.role !== 'ADMIN' && c.owner_id !== req.user.userId) {
+    if (!c.owner_id) {
+      if (req.user && req.user.role !== 'ADMIN') {
+        return res.status(403).json({
+          error: 'Forbidden: Unowned case requires administrative assignment.',
+        });
+      }
+    } else if (req.user && req.user.role !== 'ADMIN' && c.owner_id !== req.user.userId) {
       return res.status(403).json({
         error: 'Forbidden: You do not have authorization to view or modify this case (Case-Level Access Control).',
       });
@@ -153,7 +175,13 @@ export function createServer() {
       return res.status(404).json({ error: 'Evidence record not found' });
     }
 
-    if (rec.owner_id && req.user && req.user.role !== 'ADMIN' && rec.owner_id !== req.user.userId) {
+    if (!rec.owner_id) {
+      if (req.user && req.user.role !== 'ADMIN') {
+        return res.status(403).json({
+          error: 'Forbidden: Access denied to evidence belonging to unowned case without admin role.',
+        });
+      }
+    } else if (req.user && req.user.role !== 'ADMIN' && rec.owner_id !== req.user.userId) {
       return res.status(403).json({
         error: 'Forbidden: Access denied to evidence belonging to another user (IDOR Guard).',
       });
@@ -177,7 +205,7 @@ export function createServer() {
   });
 
   // --- AUTHENTICATION & USER MANAGEMENT ---
-  app.post('/api/auth/register', (req, res) => {
+  app.post('/api/auth/register', authLimiter, (req, res) => {
     const { username, password, role } = req.body;
     if (!username || typeof username !== 'string' || username.trim().length < 3) {
       return res.status(400).json({ error: 'Username must be at least 3 characters long.' });
@@ -211,7 +239,7 @@ export function createServer() {
     });
   });
 
-  app.post('/api/auth/login', (req, res) => {
+  app.post('/api/auth/login', authLimiter, (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password are required.' });
@@ -232,26 +260,105 @@ export function createServer() {
     });
   });
 
+  app.post('/api/auth/logout', requireAuth, (req, res) => {
+    if (req.user && req.user.jti) {
+      revokeToken(req.user.jti, req.user.exp);
+    }
+    res.json({ success: true, message: 'Logged out successfully; session token revoked.' });
+  });
+
+  // Dedicated Chrome Extension Scoped Pairing Flow
+  app.post('/api/auth/extension-pair', requireAuth, authLimiter, (req, res) => {
+    const { deviceName = 'Chrome MV3 Extension' } = req.body || {};
+    const credentialId = `ext_${crypto.randomUUID()}`;
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const extensionToken = issueExtensionToken(
+      {
+        userId: req.user.userId,
+        username: req.user.username,
+        credentialId,
+        deviceName,
+      },
+      30 * 86400
+    );
+
+    const tokenHash = crypto.createHash('sha256').update(extensionToken).digest('hex');
+
+    db.prepare(`
+      INSERT INTO extension_credentials (credential_id, user_id, device_name, token_hash, is_revoked, created_at, expires_at)
+      VALUES (?, ?, ?, ?, 0, ?, ?)
+    `).run(credentialId, req.user.userId, deviceName, tokenHash, now.toISOString(), expiresAt);
+
+    res.status(201).json({
+      success: true,
+      credentialId,
+      extensionToken,
+      expiresAt,
+      deviceName,
+      user: {
+        userId: req.user.userId,
+        username: req.user.username,
+      },
+    });
+  });
+
+  app.get('/api/auth/extension-credentials', requireAuth, (req, res) => {
+    const rows = db.prepare(`
+      SELECT credential_id, device_name, is_revoked, created_at, expires_at
+      FROM extension_credentials
+      WHERE user_id = ?
+      ORDER BY created_at DESC
+    `).all(req.user.userId);
+    res.json({ credentials: rows });
+  });
+
+  app.delete('/api/auth/extension-pair/:credentialId', requireAuth, (req, res) => {
+    const { credentialId } = req.params;
+    const revoked = revokeExtensionCredential(credentialId, req.user.role === 'ADMIN' ? null : req.user.userId);
+    if (!revoked) {
+      return res.status(404).json({ error: 'Extension credential not found or unauthorized to revoke' });
+    }
+    res.json({ success: true, message: 'Extension credential revoked successfully.' });
+  });
+
   app.get('/api/auth/me', requireAuth, (req, res) => {
     const user = db.prepare('SELECT user_id, username, role, created_at FROM users WHERE user_id = ?').get(req.user.userId);
     if (!user) return res.status(404).json({ error: 'User account not found' });
     res.json({ user });
   });
 
-  // --- CASES API (PROTECTED & TENANT-ISOLATED) ---
+  // --- CASES API (PROTECTED & STRICTLY TENANT-ISOLATED) ---
   app.get('/api/cases', requireAuth, (req, res) => {
     let rows;
     if (req.user.role === 'ADMIN') {
       rows = db.prepare('SELECT * FROM cases ORDER BY updated_at DESC').all();
     } else {
-      // Returns user's cases plus unassigned legacy/demo cases
+      // Strictly return cases owned by the authenticated tenant
       rows = db.prepare(`
         SELECT * FROM cases 
-        WHERE owner_id = ? OR owner_id IS NULL 
+        WHERE owner_id = ? 
         ORDER BY updated_at DESC
       `).all(req.user.userId);
     }
     res.json({ cases: rows });
+  });
+
+  // Explicit Administrative or User Claim of unowned/demo cases
+  app.post('/api/cases/:id/claim', requireAuth, (req, res) => {
+    const caseId = req.params.id;
+    const c = db.prepare('SELECT * FROM cases WHERE case_id = ?').get(caseId);
+    if (!c) return res.status(404).json({ error: 'Case not found' });
+    if (c.owner_id && c.owner_id !== req.user.userId && req.user.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Case already belongs to another owner.' });
+    }
+    db.prepare('UPDATE cases SET owner_id = ?, updated_at = ? WHERE case_id = ?').run(
+      req.user.userId,
+      new Date().toISOString(),
+      caseId
+    );
+    res.json({ success: true, message: `Case ${caseId} successfully claimed by ${req.user.username}.` });
   });
 
   app.post('/api/cases', requireAuth, (req, res) => {
@@ -661,10 +768,16 @@ export function createServer() {
     res.json({ caseId, checkpoints });
   });
 
-  // Verify Checkpoint Signature & Compare with live SQLite state
+  // Verify Checkpoint Signature & Compare with live SQLite state (Against Trusted Authority Key)
   app.post('/api/cases/:id/chain-of-custody/checkpoint/verify', optionalAuth, (req, res) => {
     try {
-      const result = verifyCustodyCheckpoint(req.body, true);
+      const checkpointData = req.body.checkpoint ? req.body.checkpoint : req.body;
+      const trustedKeyOptions = {
+        trustedPublicKeyPem: req.body.trustedPublicKeyPem,
+        trustedFingerprints: req.body.trustedFingerprints,
+        allowUntrusted: req.body.allowUntrusted,
+      };
+      const result = verifyCustodyCheckpoint(checkpointData, true, trustedKeyOptions);
       res.json(result);
     } catch (err) {
       res.status(400).json({ error: err.message });
@@ -800,7 +913,7 @@ export function createServer() {
     res.status(201).json({ success: true, reportId });
   });
 
-  // --- ENCRYPTED BACKUP & RESTORATION API ---
+  // --- ENCRYPTED DISASTER RECOVERY BACKUP & RESTORATION API ---
   app.post('/api/backup', requireAuth, backupLimiter, (req, res) => {
     try {
       const backupDir = path.join(__dirname, 'backups');
@@ -815,21 +928,43 @@ export function createServer() {
         return res.status(409).json({ error: 'Backup with this timestamp already exists.' });
       }
 
-      // Query cases belonging to authenticated user (or all if ADMIN)
+      // Query cases belonging strictly to authenticated tenant (or all if ADMIN)
       const casesQuery = req.user.role === 'ADMIN'
         ? db.prepare('SELECT * FROM cases').all()
-        : db.prepare('SELECT * FROM cases WHERE owner_id = ? OR owner_id IS NULL').all(req.user.userId);
+        : db.prepare('SELECT * FROM cases WHERE owner_id = ?').all(req.user.userId);
 
       const caseIds = casesQuery.map((c) => c.case_id);
       let evidence = [];
+      let evidenceFiles = [];
       let custody = [];
+      let custodyCheckpoints = [];
       let timeline = [];
       let correlations = [];
 
       if (caseIds.length > 0) {
         const placeholders = caseIds.map(() => '?').join(',');
         evidence = db.prepare(`SELECT * FROM evidence_records WHERE case_id IN (${placeholders})`).all(...caseIds);
-        custody = db.prepare(`SELECT * FROM chain_of_custody WHERE case_id IN (${placeholders})`).all(...caseIds);
+
+        const evidenceIds = evidence.map((e) => e.evidence_id);
+        if (evidenceIds.length > 0) {
+          const evPlaceholders = evidenceIds.map(() => '?').join(',');
+          const rawFiles = db.prepare(`SELECT * FROM evidence_files WHERE evidence_id IN (${evPlaceholders})`).all(...evidenceIds);
+
+          // Package encrypted binary payloads directly from disk without plaintext leaks
+          evidenceFiles = rawFiles.map((f) => {
+            let fileDataCiphertextBase64 = null;
+            if (f.storage_path && fs.existsSync(f.storage_path)) {
+              fileDataCiphertextBase64 = fs.readFileSync(f.storage_path).toString('base64');
+            }
+            return {
+              ...f,
+              fileDataCiphertextBase64,
+            };
+          });
+        }
+
+        custody = db.prepare(`SELECT * FROM chain_of_custody WHERE case_id IN (${placeholders}) ORDER BY rowid ASC`).all(...caseIds);
+        custodyCheckpoints = db.prepare(`SELECT * FROM custody_checkpoints WHERE case_id IN (${placeholders})`).all(...caseIds);
         timeline = db.prepare(`SELECT * FROM timeline_events WHERE case_id IN (${placeholders})`).all(...caseIds);
         correlations = db.prepare(`SELECT * FROM incident_correlations WHERE case_id IN (${placeholders})`).all(...caseIds);
       }
@@ -841,17 +976,21 @@ export function createServer() {
           ownerId: req.user.userId,
           casesCount: casesQuery.length,
           evidenceCount: evidence.length,
+          filesCount: evidenceFiles.length,
+          custodyCount: custody.length,
         },
         cases: casesQuery,
         evidence,
+        evidence_files: evidenceFiles,
         custody,
+        custody_checkpoints: custodyCheckpoints,
         timeline,
         correlations,
       };
 
       const dumpJson = JSON.stringify(dump, null, 2);
 
-      // Authenticated AES-256-GCM Encryption
+      // Authenticated AES-256-GCM Encryption (authenticated ciphertext envelope)
       const encryptedEnvelope = encryptBackup(dumpJson);
       fs.writeFileSync(backupPath, JSON.stringify(encryptedEnvelope, null, 2), { mode: 0o600 });
 
@@ -863,13 +1002,15 @@ export function createServer() {
         createdUtc: encryptedEnvelope.createdUtc,
         casesCount: casesQuery.length,
         evidenceCount: evidence.length,
+        filesCount: evidenceFiles.length,
+        custodyCount: custody.length,
       });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // Authenticated Backup Restoration Endpoint
+  // Authenticated Transactional Backup Restoration Endpoint
   app.post('/api/backup/restore', requireAuth, (req, res) => {
     try {
       const { backupFileName, backupEnvelope } = req.body;
@@ -899,24 +1040,43 @@ export function createServer() {
 
       let restoredCases = 0;
       let restoredEvidence = 0;
+      let restoredFiles = 0;
+      let restoredCustody = 0;
 
-      // Restore cases
-      for (const c of restoredData.cases) {
-        const existing = db.prepare('SELECT case_id FROM cases WHERE case_id = ?').get(c.case_id);
-        if (!existing) {
+      // Execute restoration within a single ACID transaction
+      db.exec('BEGIN IMMEDIATE;');
+      try {
+        // 1. Cross-tenant isolation verification:
+        // Ensure no restored case hijacks or overwrites an existing case owned by another tenant
+        for (const c of restoredData.cases) {
+          const existing = db.prepare('SELECT owner_id FROM cases WHERE case_id = ?').get(c.case_id);
+          if (existing && existing.owner_id && existing.owner_id !== req.user.userId && req.user.role !== 'ADMIN') {
+            throw new Error(`Cannot restore case ${c.case_id}: belongs to another tenant (Unauthorized cross-tenant overwrite rejected).`);
+          }
+        }
+
+        // 2. Restore cases (assign to authenticated tenant unless restoring as ADMIN)
+        for (const c of restoredData.cases) {
+          const targetOwner = req.user.role === 'ADMIN' ? (c.owner_id || req.user.userId) : req.user.userId;
           db.prepare(`
             INSERT INTO cases (case_id, owner_id, title, summary, status, preservation_locked, locked_at, locked_by, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(c.case_id, req.user.userId, c.title, c.summary, c.status, c.preservation_locked, c.locked_at, c.locked_by, c.created_at, c.updated_at);
+            ON CONFLICT(case_id) DO UPDATE SET
+              owner_id = excluded.owner_id,
+              title = excluded.title,
+              summary = excluded.summary,
+              status = excluded.status,
+              preservation_locked = excluded.preservation_locked,
+              locked_at = excluded.locked_at,
+              locked_by = excluded.locked_by,
+              updated_at = excluded.updated_at
+          `).run(c.case_id, targetOwner, c.title, c.summary, c.status, c.preservation_locked || 0, c.locked_at || null, c.locked_by || null, c.created_at, c.updated_at);
           restoredCases++;
         }
-      }
 
-      // Restore evidence records
-      if (restoredData.evidence && Array.isArray(restoredData.evidence)) {
-        for (const e of restoredData.evidence) {
-          const existing = db.prepare('SELECT evidence_id FROM evidence_records WHERE evidence_id = ?').get(e.evidence_id);
-          if (!existing) {
+        // 3. Restore evidence records
+        if (restoredData.evidence && Array.isArray(restoredData.evidence)) {
+          for (const e of restoredData.evidence) {
             db.prepare(`
               INSERT INTO evidence_records (
                 evidence_id, case_id, original_filename, file_type, file_size,
@@ -924,23 +1084,160 @@ export function createServer() {
                 capture_timestamp, upload_timestamp, classification, preservation_locked,
                 active_version, integrity_status, created_at, updated_at
               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(evidence_id) DO UPDATE SET
+                original_filename = excluded.original_filename,
+                file_type = excluded.file_type,
+                file_size = excluded.file_size,
+                sha256_hash = excluded.sha256_hash,
+                active_version = excluded.active_version,
+                preservation_locked = excluded.preservation_locked,
+                integrity_status = excluded.integrity_status,
+                updated_at = excluded.updated_at
             `).run(
               e.evidence_id, e.case_id, e.original_filename, e.file_type, e.file_size,
               e.sha256_hash, e.source_url, e.submission_source, e.submission_method,
-              e.capture_timestamp, e.upload_timestamp, e.classification, e.preservation_locked,
-              e.active_version, e.integrity_status, e.created_at, e.updated_at
+              e.capture_timestamp, e.upload_timestamp, e.classification, e.preservation_locked || 0,
+              e.active_version || 1, e.integrity_status || 'PENDING', e.created_at, e.updated_at
             );
             restoredEvidence++;
           }
         }
+
+        // 4. Restore evidence files & disk vault storage
+        if (restoredData.evidence_files && Array.isArray(restoredData.evidence_files)) {
+          for (const ef of restoredData.evidence_files) {
+            const fileName = `${ef.evidence_id}_v${ef.version_num}.enc`;
+            const targetStoragePath = path.join(VAULT_DIR, fileName);
+
+            if (ef.fileDataCiphertextBase64) {
+              const fileCiphertext = Buffer.from(ef.fileDataCiphertextBase64, 'base64');
+              fs.writeFileSync(targetStoragePath, fileCiphertext);
+
+              // Decrypt and verify hash against original sha256_hash
+              const decrypted = decryptBuffer(fileCiphertext, ef.encryption_iv, ef.encryption_tag);
+              const verifyHash = calculateSha256(decrypted);
+              if (verifyHash !== ef.sha256_hash) {
+                throw new Error(`Restoration Integrity Error: Hash mismatch for evidence file ${ef.file_id} (Expected ${ef.sha256_hash}, Got ${verifyHash})`);
+              }
+            }
+
+            db.prepare(`
+              INSERT INTO evidence_files (
+                file_id, evidence_id, version_num, file_type, file_size,
+                sha256_hash, storage_path, is_original, is_redacted, is_annotated,
+                annotation_notes, encryption_iv, encryption_tag, created_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(evidence_id, version_num) DO UPDATE SET
+                file_size = excluded.file_size,
+                sha256_hash = excluded.sha256_hash,
+                storage_path = excluded.storage_path,
+                is_original = excluded.is_original,
+                is_redacted = excluded.is_redacted,
+                is_annotated = excluded.is_annotated,
+                annotation_notes = excluded.annotation_notes,
+                encryption_iv = excluded.encryption_iv,
+                encryption_tag = excluded.encryption_tag
+            `).run(
+              ef.file_id, ef.evidence_id, ef.version_num, ef.file_type, ef.file_size,
+              ef.sha256_hash, targetStoragePath, ef.is_original || 0, ef.is_redacted || 0,
+              ef.is_annotated || 0, ef.annotation_notes || null, ef.encryption_iv,
+              ef.encryption_tag, ef.created_at
+            );
+            restoredFiles++;
+          }
+        }
+
+        // 5. Restore chain of custody events
+        if (restoredData.custody && Array.isArray(restoredData.custody)) {
+          for (const c of restoredData.custody) {
+            db.prepare(`
+              INSERT INTO chain_of_custody (
+                event_id, evidence_id, case_id, actor, action, timestamp,
+                event_metadata, previous_event_hash, current_event_hash
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(event_id) DO NOTHING
+            `).run(
+              c.event_id, c.evidence_id, c.case_id, c.actor, c.action, c.timestamp,
+              c.event_metadata, c.previous_event_hash, c.current_event_hash
+            );
+            restoredCustody++;
+          }
+        }
+
+        // 6. Restore custody checkpoints
+        if (restoredData.custody_checkpoints && Array.isArray(restoredData.custody_checkpoints)) {
+          for (const chk of restoredData.custody_checkpoints) {
+            db.prepare(`
+              INSERT INTO custody_checkpoints (
+                checkpoint_id, case_id, head_event_hash, event_count,
+                ed25519_public_key, ed25519_signature, created_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(checkpoint_id) DO NOTHING
+            `).run(
+              chk.checkpoint_id, chk.case_id, chk.head_event_hash, chk.event_count,
+              chk.ed25519_public_key, chk.ed25519_signature, chk.created_at
+            );
+          }
+        }
+
+        // 7. Restore timeline events
+        if (restoredData.timeline && Array.isArray(restoredData.timeline)) {
+          for (const t of restoredData.timeline) {
+            db.prepare(`
+              INSERT INTO timeline_events (
+                event_id, case_id, occurred_at, time_confidence, label,
+                related_evidence_id, platform, sender_handle, blocked_prior, created_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(event_id) DO NOTHING
+            `).run(
+              t.event_id, t.case_id, t.occurred_at, t.time_confidence || 'confirmed',
+              t.label, t.related_evidence_id || null, t.platform || null,
+              t.sender_handle || null, t.blocked_prior || 0, t.created_at
+            );
+          }
+        }
+
+        // 8. Restore incident correlations
+        if (restoredData.correlations && Array.isArray(restoredData.correlations)) {
+          for (const r of restoredData.correlations) {
+            db.prepare(`
+              INSERT INTO incident_correlations (
+                correlation_id, case_id, source_id, target_id, relation_type,
+                confidence_level, explanation, supporting_evidence_ids, status,
+                reviewed_by, reviewed_at, review_notes, created_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(correlation_id) DO NOTHING
+            `).run(
+              r.correlation_id, r.case_id, r.source_id, r.target_id, r.relation_type,
+              r.confidence_level, r.explanation, r.supporting_evidence_ids || '[]',
+              r.status || 'SUGGESTED', r.reviewed_by || null, r.reviewed_at || null,
+              r.review_notes || null, r.created_at
+            );
+          }
+        }
+
+        // 9. Cryptographically verify chain of custody for all restored cases
+        for (const c of restoredData.cases) {
+          const chainVerification = verifyCaseAuditChain(c.case_id);
+          if (!chainVerification.verified) {
+            throw new Error(`Custody Chain Verification Failed during restore for Case ${c.case_id}: ${chainVerification.breakages?.[0]?.error || 'Chain corrupted or tampered'}`);
+          }
+        }
+
+        db.exec('COMMIT;');
+      } catch (err) {
+        db.exec('ROLLBACK;');
+        throw err;
       }
 
       res.json({
         success: true,
-        message: 'Backup restored successfully with authenticated AES-256-GCM verification.',
+        message: 'Disaster recovery backup restored successfully with full transactional integrity and chain verification.',
         restored: {
           casesCount: restoredCases,
           evidenceCount: restoredEvidence,
+          filesCount: restoredFiles,
+          custodyCount: restoredCustody,
         },
       });
     } catch (err) {

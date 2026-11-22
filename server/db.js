@@ -24,8 +24,15 @@ export function getDatabase() {
   if (dbInstance) return dbInstance;
 
   dbInstance = new DatabaseSync(DB_PATH);
-  dbInstance.exec('PRAGMA foreign_keys = ON;');
-  dbInstance.exec('PRAGMA journal_mode = WAL;');
+  try {
+    dbInstance.exec('PRAGMA busy_timeout = 10000;');
+  } catch {}
+  try {
+    dbInstance.exec('PRAGMA foreign_keys = ON;');
+  } catch {}
+  try {
+    dbInstance.exec('PRAGMA journal_mode = WAL;');
+  } catch {}
 
   initSchema(dbInstance);
   return dbInstance;
@@ -203,6 +210,24 @@ function initSchema(db) {
       ed25519_public_key TEXT NOT NULL,
       ed25519_signature TEXT NOT NULL,
       created_at TEXT NOT NULL
+    );
+
+    -- Scoped Extension Credentials Table
+    CREATE TABLE IF NOT EXISTS extension_credentials (
+      credential_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+      device_name TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      is_revoked INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
+
+    -- Revoked Tokens Blacklist Table (Session Logout / Invalidation)
+    CREATE TABLE IF NOT EXISTS revoked_tokens (
+      token_id TEXT PRIMARY KEY,
+      revoked_at TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
     );
   `);
 

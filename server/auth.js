@@ -13,6 +13,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getDatabase } from './db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -83,8 +84,10 @@ export function issueToken(payload, expiresInSeconds = 86400) {
   const secret = getAuthSecret();
   const header = { alg: 'HS256', typ: 'JWT' };
   const now = Math.floor(Date.now() / 1000);
+  const jti = payload.jti || crypto.randomUUID();
   const fullPayload = {
     ...payload,
+    jti,
     iat: now,
     exp: now + expiresInSeconds,
   };
@@ -97,6 +100,66 @@ export function issueToken(payload, expiresInSeconds = 86400) {
   const encodedSignature = base64UrlEncode(signature);
 
   return `${encodedHeader}.${encodedPayload}.${encodedSignature}`;
+}
+
+/**
+ * Issues a scoped extension credential token (dedicated for Chrome MV3 extension).
+ */
+export function issueExtensionToken({ userId, username, credentialId, deviceName }, expiresInSeconds = 30 * 86400) {
+  return issueToken(
+    {
+      userId,
+      username,
+      credentialId,
+      deviceName,
+      scope: 'EXTENSION_CAPTURE',
+      role: 'USER',
+    },
+    expiresInSeconds
+  );
+}
+
+/**
+ * Revokes a session token by its JTI (or hash) by recording in the revoked_tokens blocklist.
+ */
+export function revokeToken(jti, expiresAtSec = Math.floor(Date.now() / 1000) + 86400) {
+  if (!jti) return;
+  try {
+    const db = getDatabase();
+    db.prepare(`
+      INSERT OR REPLACE INTO revoked_tokens (token_id, revoked_at, expires_at)
+      VALUES (?, ?, ?)
+    `).run(jti, new Date().toISOString(), expiresAtSec);
+  } catch (err) {
+    console.error('Failed to record token revocation:', err);
+  }
+}
+
+/**
+ * Checks whether a token JTI has been revoked.
+ */
+export function isTokenRevoked(jti) {
+  if (!jti) return false;
+  try {
+    const db = getDatabase();
+    const row = db.prepare('SELECT token_id FROM revoked_tokens WHERE token_id = ?').get(jti);
+    return Boolean(row);
+  } catch (err) {
+    return false;
+  }
+}
+
+/**
+ * Revokes a paired extension credential.
+ */
+export function revokeExtensionCredential(credentialId, userId = null) {
+  const db = getDatabase();
+  if (userId) {
+    const res = db.prepare('UPDATE extension_credentials SET is_revoked = 1 WHERE credential_id = ? AND user_id = ?').run(credentialId, userId);
+    return res.changes > 0;
+  }
+  const res = db.prepare('UPDATE extension_credentials SET is_revoked = 1 WHERE credential_id = ?').run(credentialId);
+  return res.changes > 0;
 }
 
 /**
@@ -133,6 +196,29 @@ export function verifyToken(tokenString) {
   const now = Math.floor(Date.now() / 1000);
   if (payload.exp && payload.exp < now) {
     throw new Error('Token has expired');
+  }
+
+  // Check token revocation blocklist
+  if (payload.jti && isTokenRevoked(payload.jti)) {
+    throw new Error('Token has been revoked (Session Terminated)');
+  }
+
+  // Scoped Extension Credentials validation
+  if (payload.scope === 'EXTENSION_CAPTURE') {
+    if (!payload.credentialId) {
+      throw new Error('Malformed extension token: missing credentialId');
+    }
+    const db = getDatabase();
+    const cred = db.prepare('SELECT is_revoked, expires_at FROM extension_credentials WHERE credential_id = ?').get(payload.credentialId);
+    if (!cred) {
+      throw new Error('Extension credential not found or unregistered');
+    }
+    if (cred.is_revoked === 1) {
+      throw new Error('Extension credential has been revoked');
+    }
+    if (new Date(cred.expires_at).getTime() <= Date.now()) {
+      throw new Error('Extension credential has expired');
+    }
   }
 
   return payload;

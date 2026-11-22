@@ -17,14 +17,26 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const VAULT_DIR = path.join(__dirname, 'vault_storage');
+export const VAULT_DIR = path.join(__dirname, 'vault_storage');
 if (!fs.existsSync(VAULT_DIR)) {
   fs.mkdirSync(VAULT_DIR, { recursive: true });
 }
 
 // Master encryption key (stored in secure keyfile if not provided via environment)
-const KEY_FILE = path.join(__dirname, 'data', '.vault_master.key');
+export const KEY_FILE = path.join(__dirname, 'data', '.vault_master.key');
 let MASTER_KEY = null;
+
+export function _resetVaultMasterKeyForTesting() {
+  MASTER_KEY = null;
+}
+
+export function secureKeyFilePermissions(filePath) {
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch {
+    // POSIX chmod fallback
+  }
+}
 
 export function getVaultMasterKey() {
   if (MASTER_KEY) return MASTER_KEY;
@@ -37,8 +49,29 @@ export function getVaultMasterKey() {
   if (fs.existsSync(KEY_FILE)) {
     MASTER_KEY = fs.readFileSync(KEY_FILE);
   } else {
+    // Check if vault_storage contains pre-existing encrypted evidence
+    let existingEncFiles = [];
+    if (fs.existsSync(VAULT_DIR)) {
+      try {
+        existingEncFiles = fs.readdirSync(VAULT_DIR).filter((f) => f.endsWith('.enc'));
+      } catch {
+        existingEncFiles = [];
+      }
+    }
+
+    if (existingEncFiles.length > 0) {
+      throw new Error(
+        `CRITICAL VAULT RECOVERY REQUIRED: Master key file (${KEY_FILE}) is missing, but ${existingEncFiles.length} encrypted vault file(s) exist! Refusing silent key generation to prevent permanent data loss. Please restore the vault master key file or provide VERATRACE_VAULT_KEY.`
+      );
+    }
+
     MASTER_KEY = crypto.randomBytes(32);
+    const dataDir = path.dirname(KEY_FILE);
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
     fs.writeFileSync(KEY_FILE, MASTER_KEY, { mode: 0o600 });
+    secureKeyFilePermissions(KEY_FILE);
   }
   return MASTER_KEY;
 }
