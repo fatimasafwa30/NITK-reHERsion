@@ -13,6 +13,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,11 +31,43 @@ export function _resetVaultMasterKeyForTesting() {
   MASTER_KEY = null;
 }
 
+/**
+ * Enforces strict filesystem ACLs on sensitive cryptographic key and backup files.
+ * - On Windows: Configures NTFS DACLs via icacls.exe using safe argument arrays,
+ *   stripping inherited permissions and granting access solely to the running user.
+ * - On POSIX: Enforces mode 0o600 (owner read/write only).
+ */
 export function secureKeyFilePermissions(filePath) {
+  if (!fs.existsSync(filePath)) return false;
+
+  const resolved = path.resolve(filePath);
+
+  if (process.platform === 'win32') {
+    const currentUser = process.env.USERNAME || process.env.USER;
+    if (currentUser) {
+      try {
+        // Safe argument-based invocation: array of arguments avoids shell injection
+        const res = spawnSync('icacls.exe', [
+          resolved,
+          '/inheritance:r',
+          '/grant:r',
+          `${currentUser}:(R,W)`,
+        ], { windowsHide: true });
+
+        if (res && res.status === 0) {
+          return true;
+        }
+      } catch {
+        // Fall back to chmod if icacls execution is restricted
+      }
+    }
+  }
+
   try {
-    fs.chmodSync(filePath, 0o600);
+    fs.chmodSync(resolved, 0o600);
+    return true;
   } catch {
-    // POSIX chmod fallback
+    return false;
   }
 }
 

@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getDatabase } from './db.js';
+import { secureKeyFilePermissions } from './vault.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,6 +41,7 @@ export function getEd25519KeyPair() {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
   fs.writeFileSync(PRIV_KEY_FILE, privPem, { mode: 0o600 });
+  secureKeyFilePermissions(PRIV_KEY_FILE);
   fs.writeFileSync(PUB_KEY_FILE, pubPem, { mode: 0o644 });
 
   ED25519_KEYPAIR = { privateKey, publicKey, publicKeyPem: pubPem };

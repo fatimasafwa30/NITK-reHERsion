@@ -25,6 +25,9 @@ import {
   getVaultMasterKey,
   _resetVaultMasterKeyForTesting,
   calculateSha256,
+  encryptBackup,
+  decryptBackup,
+  secureKeyFilePermissions,
   VAULT_DIR,
   KEY_FILE,
 } from '../../../server/vault.js';
@@ -34,6 +37,7 @@ import {
   verifyCaseAuditChain,
   getEd25519KeyPair,
 } from '../../../server/chainOfCustody.js';
+import { issueToken } from '../../../server/auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,11 +52,15 @@ describe('VeraTrace Enterprise Security Hardening & Disaster Recovery', () => {
   let app;
   let userAToken;
   let userBToken;
+  let adminToken;
   let userAId;
   let userBId;
 
   beforeAll(async () => {
     app = createServer();
+
+    // Generate administrator token for governance tests
+    adminToken = issueToken({ userId: 'admin_security_lead', username: 'admin', role: 'ADMIN' });
 
     // Register synthetic user A
     const uA = `sec_user_a_${Date.now()}`;
@@ -236,6 +244,68 @@ describe('VeraTrace Enterprise Security Hardening & Disaster Recovery', () => {
       expect(crossTenantRestore.status).toBe(400);
       expect(crossTenantRestore.body.error).toContain('Unauthorized cross-tenant overwrite rejected');
     });
+
+    it('Rolls back cleanly with ZERO orphan files on disk when restore fails integrity check', async () => {
+      // 1. Create a dedicated case and evidence file for this rollback test
+      const rbCase = await request(app)
+        .post('/api/cases')
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ title: 'Rollback Zero Orphan Test Case' });
+      const rbCaseId = rbCase.body.case.case_id;
+
+      const pngPayload = createSyntheticPng('ROLLBACK_ORPHAN_PROBE');
+      await request(app)
+        .post(`/api/cases/${rbCaseId}/evidence`)
+        .set('Authorization', `Bearer ${userAToken}`)
+        .attach('file', pngPayload, 'rb_probe.png');
+
+      // 2. Export backup envelope
+      const backupRes = await request(app)
+        .post('/api/backup')
+        .set('Authorization', `Bearer ${userAToken}`);
+      expect(backupRes.status).toBe(200);
+      const bFileName = backupRes.body.backupFileName;
+      const bPath = path.join(__dirname, '../../../server/backups', bFileName);
+      const envelope = JSON.parse(fs.readFileSync(bPath, 'utf8'));
+
+      // 3. Decrypt backup data and add a unique corrupt evidence file entry that does not exist in vault
+      const restoredData = decryptBackup(envelope);
+      const uniqueCorruptId = `ev_orphan_probe_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+      const targetFileName = `${uniqueCorruptId}_v1.enc`;
+      const failedEf = {
+        file_id: `f_${Date.now()}`,
+        evidence_id: uniqueCorruptId,
+        version_num: 1,
+        file_type: 'image/png',
+        file_size: pngPayload.length,
+        sha256_hash: '0000000000000000000000000000000000000000000000000000000000000000', // corrupt hash triggers mismatch
+        fileDataCiphertextBase64: restoredData.evidence_files[0]?.fileDataCiphertextBase64 || Buffer.from('TEST').toString('base64'),
+        encryption_iv: restoredData.evidence_files[0]?.encryption_iv || '00'.repeat(12),
+        encryption_tag: restoredData.evidence_files[0]?.encryption_tag || '00'.repeat(16),
+        created_at: new Date().toISOString(),
+      };
+      restoredData.evidence_files.push(failedEf);
+      const tamperedEnvelope = encryptBackup(JSON.stringify(restoredData));
+
+      // 4. Attempt restore with tampered envelope (fails in step 4 hash verification)
+      const restoreFail = await request(app)
+        .post('/api/backup/restore')
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ backupEnvelope: tamperedEnvelope });
+
+      expect(restoreFail.status).toBe(400);
+      expect(restoreFail.body.error).toContain('Restoration Integrity Error: Hash mismatch');
+
+      // 5. Verify NO orphan files or staging directories exist in VAULT_DIR
+      const filesAfter = fs.readdirSync(VAULT_DIR);
+      expect(fs.existsSync(path.join(VAULT_DIR, targetFileName))).toBe(false);
+      expect(filesAfter.some((f) => f.includes('restore_staging'))).toBe(false);
+
+      // Verify database transaction rolled back
+      const db = getDatabase();
+      const orphanDbRecord = db.prepare('SELECT * FROM evidence_records WHERE evidence_id = ?').get(uniqueCorruptId);
+      expect(orphanDbRecord).toBeUndefined();
+    });
   });
 
   // --- 3. P1: CORS RESTRICTION & SUBDOMAIN REJECTION ---
@@ -261,6 +331,36 @@ describe('VeraTrace Enterprise Security Hardening & Disaster Recovery', () => {
         .get('/api/health')
         .set('Origin', 'https://malicious-phishing.org');
       expect(res.status).toBe(403);
+    });
+
+    it('Permits localhost origins when NODE_ENV is development or test', async () => {
+      const res = await request(app)
+        .get('/api/health')
+        .set('Origin', 'http://localhost:5173');
+      expect(res.status).toBe(200);
+      expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5173');
+    });
+
+    it('Rejects localhost origin when running with NODE_ENV=production', async () => {
+      const prevEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      try {
+        const prodApp = createServer();
+        const res = await request(prodApp)
+          .get('/api/health')
+          .set('Origin', 'http://localhost:5173');
+        expect(res.status).toBe(403);
+        expect(res.body.error).toContain('CORS Policy: Origin http://localhost:5173 not allowed');
+
+        // Verify production origin https://veratrace-app.vercel.app is accepted
+        const prodRes = await request(prodApp)
+          .get('/api/health')
+          .set('Origin', 'https://veratrace-app.vercel.app');
+        expect(prodRes.status).toBe(200);
+        expect(prodRes.headers['access-control-allow-origin']).toBe('https://veratrace-app.vercel.app');
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+      }
     });
   });
 
@@ -319,10 +419,39 @@ describe('VeraTrace Enterprise Security Hardening & Disaster Recovery', () => {
       expect(res.body.cases.some((c) => c.case_id === unownedCaseId)).toBe(false);
     });
 
-    it('Explicit case claim assigns ownership to user', async () => {
+    it('Ordinary user cannot claim an unowned case (403 Forbidden)', async () => {
       const claimRes = await request(app)
         .post(`/api/cases/${unownedCaseId}/claim`)
         .set('Authorization', `Bearer ${userAToken}`);
+
+      expect(claimRes.status).toBe(403);
+      expect(claimRes.body.error).toContain('Only administrators can claim or assign unowned legacy cases');
+    });
+
+    it('Ordinary user cannot access evidence belonging to an unowned case (403 Forbidden)', async () => {
+      const db = getDatabase();
+      const unownedEvidenceId = `ev_unowned_${Date.now()}`;
+      db.prepare(`
+        INSERT INTO evidence_records (
+          evidence_id, case_id, original_filename, file_type, file_size,
+          sha256_hash, submission_source, submission_method, upload_timestamp, active_version, integrity_status,
+          created_at, updated_at
+        ) VALUES (?, ?, 'unowned_leak_probe.png', 'image/png', 100, 'abc000', 'USER_SUBMITTED', 'BROWSER_INTAKE', datetime('now'), 1, 'VERIFIED', datetime('now'), datetime('now'))
+      `).run(unownedEvidenceId, unownedCaseId);
+
+      const evRes = await request(app)
+        .get(`/api/evidence/${unownedEvidenceId}/file`)
+        .set('Authorization', `Bearer ${userAToken}`);
+
+      expect(evRes.status).toBe(403);
+      expect(evRes.body.error).toContain('Access denied to evidence belonging to unowned case without admin role');
+    });
+
+    it('Administrator can explicitly assign unowned case to user', async () => {
+      const claimRes = await request(app)
+        .post(`/api/cases/${unownedCaseId}/claim`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ targetUserId: userAId });
 
       expect(claimRes.status).toBe(200);
       expect(claimRes.body.success).toBe(true);
@@ -454,6 +583,64 @@ describe('VeraTrace Enterprise Security Hardening & Disaster Recovery', () => {
         .set('Authorization', `Bearer ${tempToken}`);
       expect(afterLogout.status).toBe(401);
       expect(afterLogout.body.error).toContain('Token has been revoked');
+    });
+  });
+
+  // --- 9. P0: WINDOWS NTFS ACL & KEY PERMISSIONS ---
+  describe('P0 — Windows NTFS ACL & Key Permission Hardening', () => {
+    it('Enforces strict permissions via secureKeyFilePermissions', () => {
+      const tempKeyFile = path.join(__dirname, `synthetic_key_${Date.now()}.key`);
+      fs.writeFileSync(tempKeyFile, 'CRYPTO_KEY_CONTENT_MOCK');
+      try {
+        const result = secureKeyFilePermissions(tempKeyFile);
+        expect(result).toBe(true);
+        expect(fs.existsSync(tempKeyFile)).toBe(true);
+      } finally {
+        if (fs.existsSync(tempKeyFile)) fs.unlinkSync(tempKeyFile);
+      }
+    });
+  });
+
+  // --- 10. P2: EXTENSION UPLOAD IDEMPOTENCY ---
+  describe('P2 — Extension Upload Idempotency & Duplicate Prevention', () => {
+    it('Replaying an upload with the same client evidenceId returns 200 idempotentReplay without creating duplicate records', async () => {
+      const caseRes = await request(app)
+        .post('/api/cases')
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ title: 'Idempotency Test Case' });
+      const caseId = caseRes.body.case.case_id;
+
+      const stableEvidenceId = `ev_test_${crypto.randomUUID()}`;
+      const pngPayload = createSyntheticPng('STABLE_IDEMPOTENCY_PAYLOAD');
+
+      // First upload
+      const upload1 = await request(app)
+        .post(`/api/cases/${caseId}/evidence`)
+        .set('Authorization', `Bearer ${userAToken}`)
+        .field('evidenceId', stableEvidenceId)
+        .field('submissionSource', 'EXTENSION_CAPTURE')
+        .attach('file', pngPayload, 'capture1.png');
+
+      expect(upload1.status).toBe(201);
+      expect(upload1.body.evidence.evidence_id).toBe(stableEvidenceId);
+
+      // Second upload (replay of the same evidenceId and file)
+      const upload2 = await request(app)
+        .post(`/api/cases/${caseId}/evidence`)
+        .set('Authorization', `Bearer ${userAToken}`)
+        .field('evidenceId', stableEvidenceId)
+        .field('submissionSource', 'EXTENSION_CAPTURE')
+        .attach('file', pngPayload, 'capture1.png');
+
+      expect(upload2.status).toBe(200);
+      expect(upload2.body.success).toBe(true);
+      expect(upload2.body.idempotentReplay).toBe(true);
+      expect(upload2.body.evidence.evidence_id).toBe(stableEvidenceId);
+
+      // Verify DB has exactly 1 row with this evidenceId
+      const db = getDatabase();
+      const count = db.prepare('SELECT count(*) as cnt FROM evidence_records WHERE evidence_id = ?').get(stableEvidenceId);
+      expect(count.cnt).toBe(1);
     });
   });
 });

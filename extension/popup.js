@@ -270,8 +270,10 @@ document.getElementById('btn-capture-tab')?.addEventListener('click', async () =
     const blob = dataUrlToBlob(dataUrl);
     const arrayBuffer = await blob.arrayBuffer();
     const sha256 = await computeSha256(arrayBuffer);
+    const evidenceId = `ev_${crypto.randomUUID()}`;
 
     currentCapture = {
+      evidenceId,
       dataUrl,
       blob,
       sha256,
@@ -348,6 +350,7 @@ document.getElementById('evidence-form')?.addEventListener('submit', async (e) =
   }
 
   const formData = new FormData();
+  formData.append('evidenceId', currentCapture.evidenceId);
   formData.append('file', currentCapture.blob, `capture_${Date.now()}.png`);
   formData.append('submissionSource', 'EXTENSION_CAPTURE');
   formData.append('submissionMethod', 'CHROME_EXT_MV3');
@@ -389,10 +392,9 @@ document.getElementById('evidence-form')?.addEventListener('submit', async (e) =
     } else if (res.status === 401 || res.status === 403) {
       const errJson = await res.json().catch(() => ({}));
       showNotification(`Upload Rejected (${res.status}): ${errJson.error || 'Extension token revoked or unauthorized.'}`, 'error', 8000);
-      // Preserve capture in local queue with base64 dataUrl so evidence is never lost
-      const offlineId = `offline_${Date.now()}`;
+      // Preserve capture in local queue with stable client evidenceId so evidence is never lost
       saveToLocalHistory({
-        evidenceId: offlineId,
+        evidenceId: currentCapture.evidenceId,
         filename: `capture_${Date.now()}.png`,
         sha256: currentCapture.sha256,
         url: currentCapture.url,
@@ -413,10 +415,9 @@ document.getElementById('evidence-form')?.addEventListener('submit', async (e) =
       throw new Error(`Server returned HTTP ${res.status}`);
     }
   } catch (err) {
-    // Offline resilience: save in local queue with base64 dataUrl so evidence is never lost and can be retried
-    const offlineId = `offline_${Date.now()}`;
+    // Offline resilience: save in local queue with stable client evidenceId
     saveToLocalHistory({
-      evidenceId: offlineId,
+      evidenceId: currentCapture.evidenceId,
       filename: `capture_${Date.now()}.png`,
       sha256: currentCapture.sha256,
       url: currentCapture.url,
@@ -495,6 +496,9 @@ async function syncPendingCaptures() {
     try {
       const blob = dataUrlToBlob(item.dataUrl);
       const formData = new FormData();
+      if (item.evidenceId) {
+        formData.append('evidenceId', item.evidenceId);
+      }
       formData.append('file', blob, item.filename);
       formData.append('submissionSource', 'EXTENSION_CAPTURE');
       formData.append('submissionMethod', 'CHROME_EXT_MV3_OFFLINE_RETRY');

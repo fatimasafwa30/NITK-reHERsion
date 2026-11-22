@@ -69,14 +69,22 @@ const __dirname = path.dirname(__filename);
 export function createServer() {
   const app = express();
 
-  // --- 1. CORS CONFIGURATION (WHITELISTED ORIGINS) ---
-  const defaultAllowedOrigins = [
+  // --- 1. CORS CONFIGURATION (ENVIRONMENT-AWARE WHITELIST) ---
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  const defaultProductionOrigins = [
+    'https://veratrace-app.vercel.app',
+  ];
+
+  const defaultDevelopmentOrigins = [
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:5176',
     'http://localhost:4000',
     'https://veratrace-app.vercel.app',
   ];
+
+  const defaultAllowedOrigins = isProduction ? defaultProductionOrigins : defaultDevelopmentOrigins;
 
   const configuredOrigins = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map((s) => s.trim())
@@ -345,20 +353,27 @@ export function createServer() {
     res.json({ cases: rows });
   });
 
-  // Explicit Administrative or User Claim of unowned/demo cases
+  // Explicit Administrative Assignment of unowned/legacy cases (Case Hijacking Guard)
   app.post('/api/cases/:id/claim', requireAuth, (req, res) => {
+    // Only administrators can claim or assign unowned legacy cases
+    if (req.user.role !== 'ADMIN') {
+      return res.status(403).json({
+        error: 'Forbidden: Only administrators can claim or assign unowned legacy cases (Case Hijacking Guard).',
+      });
+    }
+
     const caseId = req.params.id;
+    const { targetUserId } = req.body || {};
     const c = db.prepare('SELECT * FROM cases WHERE case_id = ?').get(caseId);
     if (!c) return res.status(404).json({ error: 'Case not found' });
-    if (c.owner_id && c.owner_id !== req.user.userId && req.user.role !== 'ADMIN') {
-      return res.status(403).json({ error: 'Case already belongs to another owner.' });
-    }
+
+    const newOwnerId = targetUserId || req.user.userId;
     db.prepare('UPDATE cases SET owner_id = ?, updated_at = ? WHERE case_id = ?').run(
-      req.user.userId,
+      newOwnerId,
       new Date().toISOString(),
       caseId
     );
-    res.json({ success: true, message: `Case ${caseId} successfully claimed by ${req.user.username}.` });
+    res.json({ success: true, message: `Case ${caseId} successfully assigned to ${newOwnerId}.` });
   });
 
   app.post('/api/cases', requireAuth, (req, res) => {
@@ -465,6 +480,22 @@ export function createServer() {
         const captureTimestamp = req.body.captureTimestamp || null;
         const sourceUrl = req.body.sourceUrl ? String(req.body.sourceUrl).slice(0, 500) : null;
         const now = new Date().toISOString();
+
+        // Server-Side Idempotency Protection:
+        // A repeated submission (e.g. from network disconnect during ACK) returns existing record without duplicating
+        const existingRecord = db.prepare(`
+          SELECT * FROM evidence_records 
+          WHERE case_id = ? AND (evidence_id = ? OR (sha256_hash = ? AND submission_source = 'EXTENSION_CAPTURE'))
+        `).get(caseId, evidenceId, sha256);
+
+        if (existingRecord) {
+          return res.status(200).json({
+            success: true,
+            idempotentReplay: true,
+            evidence: existingRecord,
+            message: 'Evidence was already securely sealed in vault (idempotent submission ACK).',
+          });
+        }
 
         // 1. Store Version 1 (Immutable Original) in Encrypted Vault
         const fileVersion = await storeVaultFile({
@@ -1043,6 +1074,11 @@ export function createServer() {
       let restoredFiles = 0;
       let restoredCustody = 0;
 
+      // Prepare temporary staging directory for restored files so failed restores leave ZERO orphan files on disk
+      const stagingDir = path.join(VAULT_DIR, `.restore_staging_${crypto.randomUUID()}`);
+      fs.mkdirSync(stagingDir, { recursive: true });
+      const stagedFiles = [];
+
       // Execute restoration within a single ACID transaction
       db.exec('BEGIN IMMEDIATE;');
       try {
@@ -1103,15 +1139,16 @@ export function createServer() {
           }
         }
 
-        // 4. Restore evidence files & disk vault storage
+        // 4. Restore evidence files & disk vault storage (staged)
         if (restoredData.evidence_files && Array.isArray(restoredData.evidence_files)) {
           for (const ef of restoredData.evidence_files) {
             const fileName = `${ef.evidence_id}_v${ef.version_num}.enc`;
             const targetStoragePath = path.join(VAULT_DIR, fileName);
+            const stagedFilePath = path.join(stagingDir, fileName);
 
             if (ef.fileDataCiphertextBase64) {
               const fileCiphertext = Buffer.from(ef.fileDataCiphertextBase64, 'base64');
-              fs.writeFileSync(targetStoragePath, fileCiphertext);
+              fs.writeFileSync(stagedFilePath, fileCiphertext);
 
               // Decrypt and verify hash against original sha256_hash
               const decrypted = decryptBuffer(fileCiphertext, ef.encryption_iv, ef.encryption_tag);
@@ -1119,6 +1156,7 @@ export function createServer() {
               if (verifyHash !== ef.sha256_hash) {
                 throw new Error(`Restoration Integrity Error: Hash mismatch for evidence file ${ef.file_id} (Expected ${ef.sha256_hash}, Got ${verifyHash})`);
               }
+              stagedFiles.push({ stagedFilePath, targetStoragePath });
             }
 
             db.prepare(`
@@ -1225,8 +1263,22 @@ export function createServer() {
         }
 
         db.exec('COMMIT;');
+
+        // Transaction committed successfully: promote staged files to permanent vault storage
+        for (const { stagedFilePath, targetStoragePath } of stagedFiles) {
+          fs.copyFileSync(stagedFilePath, targetStoragePath);
+        }
+        try {
+          fs.rmSync(stagingDir, { recursive: true, force: true });
+        } catch {}
       } catch (err) {
         db.exec('ROLLBACK;');
+        // Clean up temporary staging directory on rollback so zero orphan files remain
+        try {
+          if (fs.existsSync(stagingDir)) {
+            fs.rmSync(stagingDir, { recursive: true, force: true });
+          }
+        } catch {}
         throw err;
       }
 

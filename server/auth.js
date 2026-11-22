@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getDatabase } from './db.js';
+import { secureKeyFilePermissions } from './vault.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,6 +40,7 @@ export function getAuthSecret() {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
     fs.writeFileSync(AUTH_KEY_FILE, AUTH_SECRET, { mode: 0o600 });
+    secureKeyFilePermissions(AUTH_KEY_FILE);
   }
   return AUTH_SECRET;
 }
