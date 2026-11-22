@@ -229,6 +229,25 @@ function initSchema(db) {
       revoked_at TEXT NOT NULL,
       expires_at INTEGER NOT NULL
     );
+
+    -- Disaster Recovery Restore Journal (Crash-Safe Staging & Atomic Promotion)
+    CREATE TABLE IF NOT EXISTS pending_restores (
+      restore_id TEXT PRIMARY KEY,
+      staging_dir TEXT NOT NULL,
+      status TEXT NOT NULL, -- PENDING_PROMOTION, COMPLETED, FAILED
+      created_at TEXT NOT NULL
+    );
+
+    -- Password Reset Tokens Table (Zero Enumeration, Single-Use, Short Expiry)
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      reset_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_reset_token_hash ON password_reset_tokens(token_hash);
   `);
 
   // Ensure owner_id column exists in pre-existing cases table
@@ -236,6 +255,19 @@ function initSchema(db) {
     const pragmaCases = db.prepare(`PRAGMA table_info(cases)`).all();
     if (pragmaCases && !pragmaCases.some((c) => c.name === 'owner_id')) {
       db.exec(`ALTER TABLE cases ADD COLUMN owner_id TEXT REFERENCES users(user_id) ON DELETE SET NULL;`);
+    }
+  } catch (err) {
+    // Column might already exist
+  }
+
+  // Ensure password_changed_at and session_epoch columns exist in users table for session invalidation
+  try {
+    const pragmaUsers = db.prepare(`PRAGMA table_info(users)`).all();
+    if (pragmaUsers && !pragmaUsers.some((c) => c.name === 'password_changed_at')) {
+      db.exec(`ALTER TABLE users ADD COLUMN password_changed_at TEXT;`);
+    }
+    if (pragmaUsers && !pragmaUsers.some((c) => c.name === 'session_epoch')) {
+      db.exec(`ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 1;`);
     }
   } catch (err) {
     // Column might already exist

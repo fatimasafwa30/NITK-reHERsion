@@ -19,7 +19,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-import { createServer } from '../../../server/server.js';
+import { createServer, recoverPendingRestores } from '../../../server/server.js';
 import { getDatabase } from '../../../server/db.js';
 import {
   getVaultMasterKey,
@@ -305,6 +305,81 @@ describe('VeraTrace Enterprise Security Hardening & Disaster Recovery', () => {
       const db = getDatabase();
       const orphanDbRecord = db.prepare('SELECT * FROM evidence_records WHERE evidence_id = ?').get(uniqueCorruptId);
       expect(orphanDbRecord).toBeUndefined();
+    });
+
+    it('Refuses restore overwrite on statutory preservation-locked cases', async () => {
+      // Create and preservation-lock a case for User A
+      const lockCase = await request(app)
+        .post('/api/cases')
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ title: 'Locked Preservation Hold Case' });
+      const lockedCaseId = lockCase.body.case.case_id;
+
+      await request(app)
+        .patch(`/api/cases/${lockedCaseId}/preservation-lock`)
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ locked: true, reason: 'Statutory hold active' });
+
+      // Create a backup envelope attempting to overwrite this locked case
+      const backupData = {
+        meta: { version: '2.1.0-enterprise', ownerId: userAId },
+        cases: [{ case_id: lockedCaseId, owner_id: userAId, title: 'Mutated Case Overwrite' }],
+        evidence: [],
+        evidence_files: [],
+        custody: [],
+        custody_checkpoints: [],
+      };
+      const envelope = encryptBackup(JSON.stringify(backupData));
+
+      const restoreRes = await request(app)
+        .post('/api/backup/restore')
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ backupEnvelope: envelope });
+
+      expect(restoreRes.status).toBe(400);
+      expect(restoreRes.body.error).toContain('Case is protected under statutory preservation lock and cannot be overwritten');
+    });
+
+    it('Recovers interrupted promotions on restart via pending restore journal', async () => {
+      const db = getDatabase();
+      const crashRestoreId = `rst_crash_sim_${Date.now()}`;
+      const crashStagingDir = path.join(VAULT_DIR, `.restore_staging_${crashRestoreId}`);
+      fs.mkdirSync(crashStagingDir, { recursive: true });
+
+      const stagedFile = path.join(crashStagingDir, 'crash_sim_v1.enc');
+      const targetFile = path.join(VAULT_DIR, `crash_sim_promoted_${Date.now()}_v1.enc`);
+      fs.writeFileSync(stagedFile, 'ENCRYPTED_CRASH_TEST_PAYLOAD');
+
+      fs.writeFileSync(
+        path.join(crashStagingDir, 'staging_manifest.json'),
+        JSON.stringify({
+          restoreId: crashRestoreId,
+          stagedFiles: [{ stagedFilePath: stagedFile, targetStoragePath: targetFile, sha256: 'mock' }],
+        })
+      );
+
+      // Record simulated pending restore in database journal
+      db.prepare(`
+        INSERT INTO pending_restores (restore_id, staging_dir, status, created_at)
+        VALUES (?, ?, 'PENDING_PROMOTION', datetime('now'))
+      `).run(crashRestoreId, crashStagingDir);
+
+      // Run recovery mechanism (which runs automatically on server startup)
+      recoverPendingRestores(db);
+
+      // Verify file was promoted to permanent storage
+      expect(fs.existsSync(targetFile)).toBe(true);
+      expect(fs.readFileSync(targetFile, 'utf8')).toBe('ENCRYPTED_CRASH_TEST_PAYLOAD');
+
+      // Verify staging directory was cleaned up
+      expect(fs.existsSync(crashStagingDir)).toBe(false);
+
+      // Verify journal marked COMPLETED
+      const journalRow = db.prepare('SELECT status FROM pending_restores WHERE restore_id = ?').get(crashRestoreId);
+      expect(journalRow.status).toBe('COMPLETED');
+
+      // Cleanup target file
+      if (fs.existsSync(targetFile)) fs.unlinkSync(targetFile);
     });
   });
 
@@ -641,6 +716,173 @@ describe('VeraTrace Enterprise Security Hardening & Disaster Recovery', () => {
       const db = getDatabase();
       const count = db.prepare('SELECT count(*) as cnt FROM evidence_records WHERE evidence_id = ?').get(stableEvidenceId);
       expect(count.cnt).toBe(1);
+    });
+  });
+
+  // --- 11. P1: DASHBOARD SESSION COOKIES & CSRF DEFENSE (DUAL AUTH) ---
+  describe('P1 — Dashboard Session Cookies & CSRF Protection (Dual Auth)', () => {
+    let sessionCookie;
+    let csrfCookie;
+    let csrfTokenValue;
+    const sessionUser = `cookie_user_${Date.now()}`;
+
+    it('Issues HttpOnly session cookie and CSRF cookie upon successful login', async () => {
+      // 1. Register user
+      await request(app)
+        .post('/api/auth/register')
+        .send({ username: sessionUser, password: 'Password123!' });
+
+      // 2. Login
+      const loginRes = await request(app)
+        .post('/api/auth/login')
+        .send({ username: sessionUser, password: 'Password123!' });
+
+      expect(loginRes.status).toBe(200);
+      expect(loginRes.body.csrfToken).toBeDefined();
+      csrfTokenValue = loginRes.body.csrfToken;
+
+      const setCookieHeaders = loginRes.headers['set-cookie'];
+      expect(setCookieHeaders).toBeDefined();
+
+      const sessionHeader = setCookieHeaders.find((c) => c.startsWith('veratrace_session='));
+      const csrfHeader = setCookieHeaders.find((c) => c.startsWith('veratrace_csrf='));
+
+      expect(sessionHeader).toBeDefined();
+      expect(sessionHeader).toContain('HttpOnly');
+      expect(sessionHeader).toContain('SameSite=Lax');
+
+      expect(csrfHeader).toBeDefined();
+      expect(csrfHeader).toContain('SameSite=Lax');
+
+      // Extract raw cookie key=val pairs for subsequent requests
+      sessionCookie = sessionHeader.split(';')[0];
+      csrfCookie = csrfHeader.split(';')[0];
+    });
+
+    it('Permits state-changing requests using session cookie and matching X-CSRF-Token header', async () => {
+      const caseRes = await request(app)
+        .post('/api/cases')
+        .set('Cookie', `${sessionCookie}; ${csrfCookie}`)
+        .set('X-CSRF-Token', csrfTokenValue)
+        .send({ title: 'Cookie Authenticated Incident' });
+
+      expect(caseRes.status).toBe(201);
+      expect(caseRes.body.case.title).toBe('Cookie Authenticated Incident');
+    });
+
+    it('Rejects state-changing requests using session cookie when X-CSRF-Token is missing (403 Forbidden)', async () => {
+      const caseRes = await request(app)
+        .post('/api/cases')
+        .set('Cookie', `${sessionCookie}; ${csrfCookie}`)
+        .send({ title: 'CSRF Attack Attempt' });
+
+      expect(caseRes.status).toBe(403);
+      expect(caseRes.body.error).toContain('CSRF token validation failed');
+    });
+
+    it('Rejects state-changing requests using session cookie when X-CSRF-Token is mismatched (403 Forbidden)', async () => {
+      const caseRes = await request(app)
+        .post('/api/cases')
+        .set('Cookie', `${sessionCookie}; ${csrfCookie}`)
+        .set('X-CSRF-Token', 'attacker_forged_csrf_token_000')
+        .send({ title: 'CSRF Forgery Attempt' });
+
+      expect(caseRes.status).toBe(403);
+      expect(caseRes.body.error).toContain('CSRF token validation failed');
+    });
+
+    it('Chrome extension with Bearer token continues to function without CSRF header (Separate Scopes)', async () => {
+      // Create case using Bearer token without any CSRF header
+      const bearerRes = await request(app)
+        .post('/api/cases')
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ title: 'Bearer Direct Auth Case' });
+
+      expect(bearerRes.status).toBe(201);
+    });
+
+    it('Logout clears session and CSRF cookies', async () => {
+      const logoutRes = await request(app)
+        .post('/api/auth/logout')
+        .set('Cookie', `${sessionCookie}; ${csrfCookie}`)
+        .set('X-CSRF-Token', csrfTokenValue);
+
+      expect(logoutRes.status).toBe(200);
+      const setCookies = logoutRes.headers['set-cookie'];
+      expect(setCookies.some((c) => c.includes('veratrace_session=;'))).toBe(true);
+      expect(setCookies.some((c) => c.includes('veratrace_csrf=;'))).toBe(true);
+    });
+  });
+
+  // --- 12. P1: PASSWORD RECOVERY GROUNDWORK ---
+  describe('P1 — Password Recovery Groundwork (Zero Enumeration & Session Revocation)', () => {
+    const recoveryUser = `recovery_${Date.now()}`;
+    let recoveryToken;
+    let initialUserToken;
+
+    beforeAll(async () => {
+      const reg = await request(app)
+        .post('/api/auth/register')
+        .send({ username: recoveryUser, password: 'InitialPassword123!' });
+      initialUserToken = reg.body.token;
+    });
+
+    it('Forgot password returns identical generic message for existing user (Zero Enumeration)', async () => {
+      const res = await request(app)
+        .post('/api/auth/forgot-password')
+        .send({ username: recoveryUser });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toContain('If an account matches that username');
+      expect(res.body._testResetToken).toBeDefined();
+      recoveryToken = res.body._testResetToken;
+    });
+
+    it('Forgot password returns identical generic message for non-existent user (Zero Enumeration)', async () => {
+      const res = await request(app)
+        .post('/api/auth/forgot-password')
+        .send({ username: 'ghost_non_existent_user_99999' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toContain('If an account matches that username');
+      expect(res.body._testResetToken).toBeUndefined();
+    });
+
+    it('Successfully resets password with valid single-use token', async () => {
+      const resetRes = await request(app)
+        .post('/api/auth/reset-password')
+        .send({ token: recoveryToken, newPassword: 'BrandNewSecurePassword123!' });
+
+      expect(resetRes.status).toBe(200);
+      expect(resetRes.body.success).toBe(true);
+
+      // Verify user can now log in with the new password
+      const loginRes = await request(app)
+        .post('/api/auth/login')
+        .send({ username: recoveryUser, password: 'BrandNewSecurePassword123!' });
+      expect(loginRes.status).toBe(200);
+      expect(loginRes.body.token).toBeDefined();
+    });
+
+    it('Rejects reuse of already-consumed password reset token', async () => {
+      const reattemptRes = await request(app)
+        .post('/api/auth/reset-password')
+        .send({ token: recoveryToken, newPassword: 'AnotherPassword123!' });
+
+      expect(reattemptRes.status).toBe(400);
+      expect(reattemptRes.body.error).toContain('Invalid or already consumed');
+    });
+
+    it('Invalidates pre-existing session tokens issued prior to password reset', async () => {
+      // Attempting to access protected resource with initial token issued before password change
+      const meRes = await request(app)
+        .get('/api/auth/me')
+        .set('Authorization', `Bearer ${initialUserToken}`);
+
+      expect(meRes.status).toBe(401);
+      expect(meRes.body.error).toContain('Session invalidated due to password change');
     });
   });
 });

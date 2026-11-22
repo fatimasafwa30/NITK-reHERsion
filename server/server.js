@@ -49,6 +49,7 @@ import {
 import {
   hashPassword,
   verifyPassword,
+  isPasswordStrong,
   issueToken,
   issueExtensionToken,
   revokeToken,
@@ -65,6 +66,57 @@ import { createRateLimiter } from './rateLimiter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+/**
+ * Crash-Safe Restoration Journal Recovery
+ * Scans for interrupted promotions (e.g. process crash after DB commit but before file promotion)
+ * and promotes remaining staged evidence files, then cleans up staging directories.
+ * Also purges orphaned staging folders from pre-commit crashes.
+ */
+export function recoverPendingRestores(db) {
+  try {
+    const pending = db.prepare(`SELECT * FROM pending_restores WHERE status = 'PENDING_PROMOTION'`).all();
+    for (const item of pending) {
+      if (fs.existsSync(item.staging_dir)) {
+        const manifestPath = path.join(item.staging_dir, 'staging_manifest.json');
+        if (fs.existsSync(manifestPath)) {
+          try {
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+            if (manifest.stagedFiles && Array.isArray(manifest.stagedFiles)) {
+              for (const sf of manifest.stagedFiles) {
+                if (fs.existsSync(sf.stagedFilePath) && (!fs.existsSync(sf.targetStoragePath) || fs.statSync(sf.targetStoragePath).size === 0)) {
+                  fs.copyFileSync(sf.stagedFilePath, sf.targetStoragePath);
+                }
+              }
+            }
+          } catch {}
+        }
+        try {
+          fs.rmSync(item.staging_dir, { recursive: true, force: true });
+        } catch {}
+      }
+      db.prepare(`UPDATE pending_restores SET status = 'COMPLETED' WHERE restore_id = ?`).run(item.restore_id);
+    }
+
+    // Scan VAULT_DIR for any orphaned staging directories (.restore_staging_*) from pre-commit crashes
+    if (fs.existsSync(VAULT_DIR)) {
+      const entries = fs.readdirSync(VAULT_DIR);
+      for (const entry of entries) {
+        if (entry.startsWith('.restore_staging_')) {
+          const orphanPath = path.join(VAULT_DIR, entry);
+          const hasPending = pending.some((p) => p.staging_dir === orphanPath);
+          if (!hasPending) {
+            try {
+              fs.rmSync(orphanPath, { recursive: true, force: true });
+            } catch {}
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[VeraTrace Recovery] Note during pending restore scan:', err.message);
+  }
+}
 
 export function createServer() {
   const app = express();
@@ -102,7 +154,7 @@ export function createServer() {
       },
       credentials: true,
       methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Actor', 'X-VeraTrace-Version'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Actor', 'X-VeraTrace-Version', 'X-CSRF-Token'],
     })
   );
 
@@ -112,6 +164,22 @@ export function createServer() {
       return res.status(403).json({ error: err.message });
     }
     next(err);
+  });
+
+  // Cookie parser middleware (extracts cookies into req.cookies)
+  app.use((req, res, next) => {
+    const cookieHeader = req.headers.cookie;
+    req.cookies = {};
+    if (cookieHeader) {
+      for (const pair of cookieHeader.split(';')) {
+        const idx = pair.indexOf('=');
+        if (idx === -1) continue;
+        const key = pair.slice(0, idx).trim();
+        const val = pair.slice(idx + 1).trim();
+        req.cookies[key] = decodeURIComponent(val);
+      }
+    }
+    next();
   });
 
   app.use(express.json({ limit: '50mb' }));
@@ -125,11 +193,13 @@ export function createServer() {
 
   // Dedicated Rate Limiters
   const authLimiter = createRateLimiter({ windowMs: 60000, maxRequests: 10, message: 'Too many authentication attempts. Please try again in a minute.' });
+  const forgotPasswordLimiter = createRateLimiter({ windowMs: 15 * 60000, maxRequests: 5, message: 'Too many password reset requests. Please try again later.' });
   const uploadLimiter = createRateLimiter({ windowMs: 60000, maxRequests: 60, message: 'Upload rate limit exceeded. Please wait a minute.' });
   const decryptionLimiter = createRateLimiter({ windowMs: 60000, maxRequests: 120, message: 'Evidence decryption rate limit exceeded. Please wait a minute.' });
   const backupLimiter = createRateLimiter({ windowMs: 60000, maxRequests: 10, message: 'Backup rate limit exceeded.' });
 
   const db = getDatabase();
+  recoverPendingRestores(db);
 
   // --- AUTHORIZATION & IDOR GUARDS ---
   /**
@@ -238,12 +308,21 @@ export function createServer() {
       VALUES (?, ?, ?, ?, ?)
     `).run(userId, cleanUser, passwordHash, assignedRole, now);
 
-    const token = issueToken({ userId, username: cleanUser, role: assignedRole });
+    const token = issueToken({ userId, username: cleanUser, role: assignedRole, sessionEpoch: 1 });
+    const csrfToken = crypto.randomUUID();
+    const cookieFlags = `HttpOnly; Path=/; SameSite=Lax${isProduction ? '; Secure' : ''}`;
+    const csrfCookieFlags = `Path=/; SameSite=Lax${isProduction ? '; Secure' : ''}`;
+
+    res.setHeader('Set-Cookie', [
+      `veratrace_session=${encodeURIComponent(token)}; ${cookieFlags}`,
+      `veratrace_csrf=${encodeURIComponent(csrfToken)}; ${csrfCookieFlags}`,
+    ]);
 
     res.status(201).json({
       success: true,
       user: { userId, username: cleanUser, role: assignedRole },
       token,
+      csrfToken,
     });
   });
 
@@ -259,12 +338,21 @@ export function createServer() {
       return res.status(401).json({ error: 'Invalid username or password credentials.' });
     }
 
-    const token = issueToken({ userId: user.user_id, username: user.username, role: user.role });
+    const token = issueToken({ userId: user.user_id, username: user.username, role: user.role, sessionEpoch: user.session_epoch || 1 });
+    const csrfToken = crypto.randomUUID();
+    const cookieFlags = `HttpOnly; Path=/; SameSite=Lax${isProduction ? '; Secure' : ''}`;
+    const csrfCookieFlags = `Path=/; SameSite=Lax${isProduction ? '; Secure' : ''}`;
+
+    res.setHeader('Set-Cookie', [
+      `veratrace_session=${encodeURIComponent(token)}; ${cookieFlags}`,
+      `veratrace_csrf=${encodeURIComponent(csrfToken)}; ${csrfCookieFlags}`,
+    ]);
 
     res.json({
       success: true,
       user: { userId: user.user_id, username: user.username, role: user.role },
       token,
+      csrfToken,
     });
   });
 
@@ -272,7 +360,96 @@ export function createServer() {
     if (req.user && req.user.jti) {
       revokeToken(req.user.jti, req.user.exp);
     }
-    res.json({ success: true, message: 'Logged out successfully; session token revoked.' });
+    res.setHeader('Set-Cookie', [
+      'veratrace_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly',
+      'veratrace_csrf=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+    ]);
+    res.json({ success: true, message: 'Logged out successfully; session token revoked and cookies cleared.' });
+  });
+
+  // --- PASSWORD RECOVERY GROUNDWORK (Zero-Enumeration, Single-Use Expiring Tokens) ---
+  app.post('/api/auth/forgot-password', forgotPasswordLimiter, (req, res) => {
+    const { username } = req.body || {};
+    let testResetToken = null;
+
+    if (username && typeof username === 'string') {
+      const cleanUser = username.trim().toLowerCase();
+      const user = db.prepare('SELECT user_id FROM users WHERE username = ?').get(cleanUser);
+
+      if (user) {
+        // Invalidate previous unused reset tokens for this user
+        db.prepare('UPDATE password_reset_tokens SET used = 1 WHERE user_id = ?').run(user.user_id);
+
+        const rawToken = crypto.randomBytes(32).toString('hex');
+        const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15-minute expiry
+        const resetId = `rst_${crypto.randomUUID()}`;
+
+        db.prepare(`
+          INSERT INTO password_reset_tokens (reset_id, user_id, token_hash, expires_at, used, created_at)
+          VALUES (?, ?, ?, ?, 0, datetime('now'))
+        `).run(resetId, user.user_id, tokenHash, expiresAt);
+
+        // In test mode, expose token so automated suites can verify the flow without SMTP
+        if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
+          testResetToken = rawToken;
+        }
+      }
+    }
+
+    // Zero-Enumeration: return identical response regardless of whether user exists
+    const responseBody = {
+      success: true,
+      message: 'If an account matches that username, a password reset procedure has been initiated.',
+    };
+    if (testResetToken) {
+      responseBody._testResetToken = testResetToken;
+    }
+    res.json(responseBody);
+  });
+
+  app.post('/api/auth/reset-password', authLimiter, (req, res) => {
+    const { token, newPassword } = req.body || {};
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({ error: 'Reset token is required.' });
+    }
+    if (!newPassword || typeof newPassword !== 'string' || !isPasswordStrong(newPassword)) {
+      return res.status(400).json({
+        error: 'New password must be at least 8 characters long and contain uppercase, lowercase, and numeric or special characters.',
+      });
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(token.trim()).digest('hex');
+    const resetRecord = db.prepare(`
+      SELECT * FROM password_reset_tokens 
+      WHERE token_hash = ? AND used = 0
+    `).get(tokenHash);
+
+    if (!resetRecord) {
+      return res.status(400).json({ error: 'Invalid or already consumed password reset token.' });
+    }
+
+    if (new Date(resetRecord.expires_at).getTime() <= Date.now()) {
+      db.prepare('UPDATE password_reset_tokens SET used = 1 WHERE reset_id = ?').run(resetRecord.reset_id);
+      return res.status(400).json({ error: 'Password reset token has expired. Please request a new one.' });
+    }
+
+    // Mark token as consumed
+    db.prepare('UPDATE password_reset_tokens SET used = 1 WHERE reset_id = ?').run(resetRecord.reset_id);
+
+    // Update password hash and set password_changed_at to invalidate prior session tokens
+    const newHash = hashPassword(newPassword);
+    const now = new Date().toISOString();
+    db.prepare(`
+      UPDATE users 
+      SET password_hash = ?, session_epoch = COALESCE(session_epoch, 1) + 1, password_changed_at = ? 
+      WHERE user_id = ?
+    `).run(newHash, now, resetRecord.user_id);
+
+    res.json({
+      success: true,
+      message: 'Password has been successfully reset. All active sessions have been invalidated. Please log in with your new credentials.',
+    });
   });
 
   // Dedicated Chrome Extension Scoped Pairing Flow
@@ -1075,19 +1252,34 @@ export function createServer() {
       let restoredCustody = 0;
 
       // Prepare temporary staging directory for restored files so failed restores leave ZERO orphan files on disk
-      const stagingDir = path.join(VAULT_DIR, `.restore_staging_${crypto.randomUUID()}`);
+      const restoreId = `rst_${crypto.randomUUID()}`;
+      const stagingDir = path.join(VAULT_DIR, `.restore_staging_${restoreId}`);
       fs.mkdirSync(stagingDir, { recursive: true });
       const stagedFiles = [];
+      const preExistingBackups = [];
+      const preBackupDir = path.join(stagingDir, '.pre_existing_backups');
 
       // Execute restoration within a single ACID transaction
       db.exec('BEGIN IMMEDIATE;');
       try {
-        // 1. Cross-tenant isolation verification:
-        // Ensure no restored case hijacks or overwrites an existing case owned by another tenant
+        // Record pending restore in transaction journal for crash-safe recovery
+        db.prepare(`
+          INSERT INTO pending_restores (restore_id, staging_dir, status, created_at)
+          VALUES (?, ?, 'PENDING_PROMOTION', datetime('now'))
+        `).run(restoreId, stagingDir);
+
+        // 1. Cross-tenant isolation & Preservation Lock verification:
+        // Ensure no restored case hijacks or overwrites an existing case owned by another tenant,
+        // and cannot overwrite any case under statutory preservation lock
         for (const c of restoredData.cases) {
-          const existing = db.prepare('SELECT owner_id FROM cases WHERE case_id = ?').get(c.case_id);
-          if (existing && existing.owner_id && existing.owner_id !== req.user.userId && req.user.role !== 'ADMIN') {
-            throw new Error(`Cannot restore case ${c.case_id}: belongs to another tenant (Unauthorized cross-tenant overwrite rejected).`);
+          const existing = db.prepare('SELECT owner_id, preservation_locked FROM cases WHERE case_id = ?').get(c.case_id);
+          if (existing) {
+            if (existing.owner_id && existing.owner_id !== req.user.userId && req.user.role !== 'ADMIN') {
+              throw new Error(`Cannot restore case ${c.case_id}: belongs to another tenant (Unauthorized cross-tenant overwrite rejected).`);
+            }
+            if (existing.preservation_locked === 1) {
+              throw new Error(`Cannot restore case ${c.case_id}: Case is protected under statutory preservation lock and cannot be overwritten.`);
+            }
           }
         }
 
@@ -1156,7 +1348,15 @@ export function createServer() {
               if (verifyHash !== ef.sha256_hash) {
                 throw new Error(`Restoration Integrity Error: Hash mismatch for evidence file ${ef.file_id} (Expected ${ef.sha256_hash}, Got ${verifyHash})`);
               }
-              stagedFiles.push({ stagedFilePath, targetStoragePath });
+              stagedFiles.push({ stagedFilePath, targetStoragePath, fileName, sha256: ef.sha256_hash });
+
+              // If file already exists in vault, backup before overwrite
+              if (fs.existsSync(targetStoragePath)) {
+                if (!fs.existsSync(preBackupDir)) fs.mkdirSync(preBackupDir, { recursive: true });
+                const backupCopyPath = path.join(preBackupDir, fileName);
+                fs.copyFileSync(targetStoragePath, backupCopyPath);
+                preExistingBackups.push({ original: targetStoragePath, backup: backupCopyPath });
+              }
             }
 
             db.prepare(`
@@ -1184,6 +1384,12 @@ export function createServer() {
             restoredFiles++;
           }
         }
+
+        // Write recovery manifest in staging folder before commit
+        fs.writeFileSync(
+          path.join(stagingDir, 'staging_manifest.json'),
+          JSON.stringify({ restoreId, stagedFiles, createdAt: new Date().toISOString() })
+        );
 
         // 5. Restore chain of custody events
         if (restoredData.custody && Array.isArray(restoredData.custody)) {
@@ -1268,11 +1474,20 @@ export function createServer() {
         for (const { stagedFilePath, targetStoragePath } of stagedFiles) {
           fs.copyFileSync(stagedFilePath, targetStoragePath);
         }
+
+        // Mark restore completed in journal and clean up staging directory
+        db.prepare(`UPDATE pending_restores SET status = 'COMPLETED' WHERE restore_id = ?`).run(restoreId);
         try {
           fs.rmSync(stagingDir, { recursive: true, force: true });
         } catch {}
       } catch (err) {
         db.exec('ROLLBACK;');
+        // Revert any pre-existing file overwrites
+        for (const { original, backup } of preExistingBackups) {
+          try {
+            if (fs.existsSync(backup)) fs.copyFileSync(backup, original);
+          } catch {}
+        }
         // Clean up temporary staging directory on rollback so zero orphan files remain
         try {
           if (fs.existsSync(stagingDir)) {

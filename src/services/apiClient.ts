@@ -27,6 +27,12 @@ export async function isBackendOnline(): Promise<boolean> {
   }
 }
 
+function getCsrfCookie(): string | null {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(/(?:^|; )veratrace_csrf=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 export async function apiFetch(endpoint: string, options: RequestInit = {}): Promise<any> {
   const online = await isBackendOnline();
   if (!online) {
@@ -35,12 +41,15 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
 
   const url = endpoint.startsWith('http') ? endpoint : `${BACKEND_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
   const token = typeof window !== 'undefined' ? window.localStorage?.getItem('veratrace_token') : null;
+  const csrfToken = getCsrfCookie();
 
   const res = await fetch(url, {
+    credentials: 'include',
     ...options,
     headers: {
       ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
       ...(options.headers || {}),
     },
   });

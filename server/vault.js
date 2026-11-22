@@ -33,8 +33,9 @@ export function _resetVaultMasterKeyForTesting() {
 
 /**
  * Enforces strict filesystem ACLs on sensitive cryptographic key and backup files.
- * - On Windows: Configures NTFS DACLs via icacls.exe using safe argument arrays,
- *   stripping inherited permissions and granting access solely to the running user.
+ * - On Windows: Identifies the exact user principal via whoami.exe and configures
+ *   NTFS DACLs via icacls.exe using safe argument arrays, stripping inherited permissions
+ *   and granting read/write access solely to the running user.
  * - On POSIX: Enforces mode 0o600 (owner read/write only).
  */
 export function secureKeyFilePermissions(filePath) {
@@ -43,7 +44,19 @@ export function secureKeyFilePermissions(filePath) {
   const resolved = path.resolve(filePath);
 
   if (process.platform === 'win32') {
-    const currentUser = process.env.USERNAME || process.env.USER;
+    let currentUser = null;
+    try {
+      const who = spawnSync('whoami.exe', { windowsHide: true });
+      if (who.status === 0 && who.stdout) {
+        const out = who.stdout.toString().trim();
+        if (out) currentUser = out;
+      }
+    } catch {}
+
+    if (!currentUser) {
+      currentUser = process.env.USERNAME || process.env.USER;
+    }
+
     if (currentUser) {
       try {
         // Safe argument-based invocation: array of arguments avoids shell injection
@@ -81,6 +94,10 @@ export function getVaultMasterKey() {
 
   if (fs.existsSync(KEY_FILE)) {
     MASTER_KEY = fs.readFileSync(KEY_FILE);
+    const secured = secureKeyFilePermissions(KEY_FILE);
+    if (!secured && process.env.NODE_ENV === 'production') {
+      throw new Error(`CRITICAL SECURITY FAILURE: Unable to enforce secure NTFS/POSIX permissions on master key file (${KEY_FILE}).`);
+    }
   } else {
     // Check if vault_storage contains pre-existing encrypted evidence
     let existingEncFiles = [];
@@ -104,7 +121,10 @@ export function getVaultMasterKey() {
       fs.mkdirSync(dataDir, { recursive: true });
     }
     fs.writeFileSync(KEY_FILE, MASTER_KEY, { mode: 0o600 });
-    secureKeyFilePermissions(KEY_FILE);
+    const secured = secureKeyFilePermissions(KEY_FILE);
+    if (!secured && process.env.NODE_ENV === 'production') {
+      throw new Error(`CRITICAL SECURITY FAILURE: Unable to enforce secure NTFS/POSIX permissions on newly generated master key file (${KEY_FILE}).`);
+    }
   }
   return MASTER_KEY;
 }

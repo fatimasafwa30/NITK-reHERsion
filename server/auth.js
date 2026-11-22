@@ -34,13 +34,20 @@ export function getAuthSecret() {
 
   if (fs.existsSync(AUTH_KEY_FILE)) {
     AUTH_SECRET = fs.readFileSync(AUTH_KEY_FILE);
+    const secured = secureKeyFilePermissions(AUTH_KEY_FILE);
+    if (!secured && process.env.NODE_ENV === 'production') {
+      throw new Error(`CRITICAL SECURITY FAILURE: Unable to enforce secure NTFS/POSIX permissions on auth key file (${AUTH_KEY_FILE}).`);
+    }
   } else {
     AUTH_SECRET = crypto.randomBytes(32);
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
     fs.writeFileSync(AUTH_KEY_FILE, AUTH_SECRET, { mode: 0o600 });
-    secureKeyFilePermissions(AUTH_KEY_FILE);
+    const secured = secureKeyFilePermissions(AUTH_KEY_FILE);
+    if (!secured && process.env.NODE_ENV === 'production') {
+      throw new Error(`CRITICAL SECURITY FAILURE: Unable to enforce secure NTFS/POSIX permissions on newly generated auth key file (${AUTH_KEY_FILE}).`);
+    }
   }
   return AUTH_SECRET;
 }
@@ -223,21 +230,74 @@ export function verifyToken(tokenString) {
     }
   }
 
+  // Session Invalidation upon Password Change / Session Epoch Rotation (Dashboard user sessions)
+  if (payload.userId && payload.scope !== 'EXTENSION_CAPTURE') {
+    const db = getDatabase();
+    const user = db.prepare('SELECT session_epoch, password_changed_at FROM users WHERE user_id = ?').get(payload.userId);
+    if (user) {
+      if (user.session_epoch && (payload.sessionEpoch || 0) < user.session_epoch) {
+        throw new Error('Session invalidated due to password change. Please log in again.');
+      }
+      if (user.password_changed_at) {
+        const changedSec = Math.floor(new Date(user.password_changed_at).getTime() / 1000);
+        if (payload.iat && payload.iat < changedSec) {
+          throw new Error('Session invalidated due to password change. Please log in again.');
+        }
+      }
+    }
+  }
+
   return payload;
 }
 
 /**
+ * Validates password complexity:
+ * Minimum 8 characters, at least 1 uppercase letter, 1 lowercase letter, and 1 number or special symbol.
+ */
+export function isPasswordStrong(password) {
+  if (typeof password !== 'string') return false;
+  if (password.length < 8) return false;
+  const hasUpper = /[A-Z]/.test(password);
+  const hasLower = /[a-z]/.test(password);
+  const hasDigitOrSpecial = /[0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password);
+  return hasUpper && hasLower && hasDigitOrSpecial;
+}
+
+/**
  * Express middleware to enforce authentication.
+ * Supports Dual Authentication:
+ * 1. Bearer Header (Chrome Extension & API clients)
+ * 2. HttpOnly Cookie (Dashboard Web sessions with CSRF protection)
  */
 export function requireAuth(req, res, next) {
+  let token = null;
+  let isCookieAuth = false;
+
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.slice(7).trim();
+  } else if (req.cookies && req.cookies.veratrace_session) {
+    token = req.cookies.veratrace_session;
+    isCookieAuth = true;
+  }
+
+  if (!token) {
     return res.status(401).json({
-      error: 'Authentication Required: Missing or malformed Authorization header.',
+      error: 'Authentication Required: Missing or malformed Authorization header or session cookie.',
     });
   }
 
-  const token = authHeader.slice(7).trim();
+  // Enforce Double-Submit Cookie CSRF validation on state-changing requests using cookie sessions
+  if (isCookieAuth && ['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) {
+    const csrfHeader = req.headers['x-csrf-token'];
+    const csrfCookie = req.cookies?.veratrace_csrf;
+    if (!csrfHeader || !csrfCookie || csrfHeader !== csrfCookie) {
+      return res.status(403).json({
+        error: 'Forbidden: CSRF token validation failed (Missing or mismatched X-CSRF-Token).',
+      });
+    }
+  }
+
   try {
     const decoded = verifyToken(token);
     req.user = decoded;
@@ -253,10 +313,16 @@ export function requireAuth(req, res, next) {
  * Express middleware for optional authentication (e.g. public verify routes).
  */
 export function optionalAuth(req, res, next) {
+  let token = null;
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.slice(7).trim();
+  } else if (req.cookies && req.cookies.veratrace_session) {
+    token = req.cookies.veratrace_session;
+  }
+
+  if (token) {
     try {
-      const token = authHeader.slice(7).trim();
       req.user = verifyToken(token);
     } catch {
       // Ignore invalid token for optional auth

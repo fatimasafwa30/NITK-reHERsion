@@ -30,6 +30,10 @@ export function getEd25519KeyPair() {
     const privateKey = crypto.createPrivateKey(privPem);
     const publicKey = crypto.createPublicKey(pubPem);
     ED25519_KEYPAIR = { privateKey, publicKey, publicKeyPem: pubPem };
+    const secured = secureKeyFilePermissions(PRIV_KEY_FILE);
+    if (!secured && process.env.NODE_ENV === 'production') {
+      throw new Error(`CRITICAL SECURITY FAILURE: Unable to enforce secure NTFS/POSIX permissions on custody private key (${PRIV_KEY_FILE}).`);
+    }
     return ED25519_KEYPAIR;
   }
 
@@ -41,7 +45,10 @@ export function getEd25519KeyPair() {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
   fs.writeFileSync(PRIV_KEY_FILE, privPem, { mode: 0o600 });
-  secureKeyFilePermissions(PRIV_KEY_FILE);
+  const secured = secureKeyFilePermissions(PRIV_KEY_FILE);
+  if (!secured && process.env.NODE_ENV === 'production') {
+    throw new Error(`CRITICAL SECURITY FAILURE: Unable to enforce secure NTFS/POSIX permissions on newly generated custody private key (${PRIV_KEY_FILE}).`);
+  }
   fs.writeFileSync(PUB_KEY_FILE, pubPem, { mode: 0o644 });
 
   ED25519_KEYPAIR = { privateKey, publicKey, publicKeyPem: pubPem };
