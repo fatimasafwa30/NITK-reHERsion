@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "VeraTrace — Digital Evidence Capture",
+  "version": "2.0.0",
+  "description": "Privacy-first digital evidence capture and forensic hashing for online harassment documentation.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://localhost:4000/*",
+    "https://veratrace-app.vercel.app/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "VeraTrace Evidence Intake"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "48": "icon.svg",
+    "128": "icon.svg"
+  }
+}

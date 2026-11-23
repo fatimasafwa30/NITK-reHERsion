@@ -2,8 +2,14 @@
 dist
 .env
 .env.*
+!.env.example
 .DS_Store
 Thumbs.db
 *.log
 .claude/
 .vercel
+
+# VeraTrace Backend runtime storage
+server/data/
+server/vault_storage/
+server/backups/

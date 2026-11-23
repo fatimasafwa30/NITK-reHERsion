@@ -1,0 +1,888 @@
+/**
+ * VeraTrace — Disaster Recovery, Extension Pairing & Security Hardening Vitest Suite
+ *
+ * Validates:
+ * 1. P0 — Scoped Extension Pairing, Uploads, Retries, and Revocation
+ * 2. P0 — Full Encrypted Disaster Recovery Backup & Transactional Integrity
+ * 3. P1 — Strict Origin CORS Enforcement (rejection of unapproved domains & subdomains)
+ * 4. P1 — Authentication Rate Limiting
+ * 5. P1 — Strict Tenant Isolation on Unowned / Legacy Cases
+ * 6. P1 — Trusted Checkpoint Anchoring & Public Key Substitution Prevention
+ * 7. P1 — Vault Master Key Safety (refusal of silent regeneration if encrypted files exist)
+ * 8. P2 — Session Token Revocation & Logout
+ */
+
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import request from 'supertest';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+
+import { createServer, recoverPendingRestores } from '../../../server/server.js';
+import { getDatabase } from '../../../server/db.js';
+import {
+  getVaultMasterKey,
+  _resetVaultMasterKeyForTesting,
+  calculateSha256,
+  encryptBackup,
+  decryptBackup,
+  secureKeyFilePermissions,
+  VAULT_DIR,
+  KEY_FILE,
+} from '../../../server/vault.js';
+import {
+  createCustodyCheckpoint,
+  verifyCustodyCheckpoint,
+  verifyCaseAuditChain,
+  getEd25519KeyPair,
+} from '../../../server/chainOfCustody.js';
+import { issueToken } from '../../../server/auth.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+function createSyntheticPng(text = 'EVIDENCE_PAYLOAD') {
+  const header = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const content = Buffer.from(text, 'utf8');
+  return Buffer.concat([header, content]);
+}
+
+describe('VeraTrace Enterprise Security Hardening & Disaster Recovery', () => {
+  let app;
+  let userAToken;
+  let userBToken;
+  let adminToken;
+  let userAId;
+  let userBId;
+
+  beforeAll(async () => {
+    app = createServer();
+
+    // Generate administrator token for governance tests
+    adminToken = issueToken({ userId: 'admin_security_lead', username: 'admin', role: 'ADMIN' });
+
+    // Register synthetic user A
+    const uA = `sec_user_a_${Date.now()}`;
+    const resA = await request(app)
+      .post('/api/auth/register')
+      .send({ username: uA, password: 'StrongPassword123!' });
+    expect(resA.status).toBe(201);
+    userAToken = resA.body.token;
+    userAId = resA.body.user.userId;
+
+    // Register synthetic user B
+    const uB = `sec_user_b_${Date.now()}`;
+    const resB = await request(app)
+      .post('/api/auth/register')
+      .send({ username: uB, password: 'StrongPassword123!' });
+    expect(resB.status).toBe(201);
+    userBToken = resB.body.token;
+    userBId = resB.body.user.userId;
+  });
+
+  // --- 1. P0: CHROME EXTENSION PAIRING & SCOPED TOKENS ---
+  describe('P0 — Chrome Extension Authentication & Scoped Pairing', () => {
+    let extensionToken;
+    let credentialId;
+    let caseAId;
+
+    beforeAll(async () => {
+      // Create a case for User A
+      const caseRes = await request(app)
+        .post('/api/cases')
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ title: "User A's Extension Incident Case" });
+      caseAId = caseRes.body.case.case_id;
+    });
+
+    it('Dashboard user pairs Chrome extension, receiving scoped token and credentialId', async () => {
+      const pairRes = await request(app)
+        .post('/api/auth/extension-pair')
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ deviceName: 'Investigator Chrome MV3' });
+
+      expect(pairRes.status).toBe(201);
+      expect(pairRes.body.success).toBe(true);
+      expect(pairRes.body.credentialId).toContain('ext_');
+      expect(pairRes.body.extensionToken).toBeDefined();
+
+      extensionToken = pairRes.body.extensionToken;
+      credentialId = pairRes.body.credentialId;
+
+      // Verify listing of credentials
+      const listRes = await request(app)
+        .get('/api/auth/extension-credentials')
+        .set('Authorization', `Bearer ${userAToken}`);
+      expect(listRes.status).toBe(200);
+      expect(listRes.body.credentials.some((c) => c.credential_id === credentialId)).toBe(true);
+    });
+
+    it('Uploads evidence using the scoped extension token with case ownership verified', async () => {
+      const pngBytes = createSyntheticPng('EXTENSION_TAB_CAPTURE_BYTES');
+      const uploadRes = await request(app)
+        .post(`/api/cases/${caseAId}/evidence`)
+        .set('Authorization', `Bearer ${extensionToken}`)
+        .attach('file', pngBytes, 'browser_tab.png')
+        .field('submissionSource', 'EXTENSION_CAPTURE')
+        .field('submissionMethod', 'CHROME_EXT_MV3');
+
+      expect(uploadRes.status).toBe(201);
+      expect(uploadRes.body.evidence).toBeDefined();
+      expect(uploadRes.body.evidence.original_filename).toBe('browser_tab.png');
+    });
+
+    it('Rejects extension upload to another user’s case (Tenant isolation guard)', async () => {
+      // Create a case for User B
+      const caseBRes = await request(app)
+        .post('/api/cases')
+        .set('Authorization', `Bearer ${userBToken}`)
+        .send({ title: "User B's Case" });
+      const caseBId = caseBRes.body.case.case_id;
+
+      // User A's extension token attempts to upload to User B's case
+      const pngBytes = createSyntheticPng('UNAUTHORIZED_CROSS_TENANT_INJECTION');
+      const uploadRes = await request(app)
+        .post(`/api/cases/${caseBId}/evidence`)
+        .set('Authorization', `Bearer ${extensionToken}`)
+        .attach('file', pngBytes, 'injected.png');
+
+      expect(uploadRes.status).toBe(403);
+      expect(uploadRes.body.error).toContain('Forbidden');
+    });
+
+    it('Revokes extension credential and rejects subsequent uploads with 401', async () => {
+      // Revoke credential
+      const revokeRes = await request(app)
+        .delete(`/api/auth/extension-pair/${credentialId}`)
+        .set('Authorization', `Bearer ${userAToken}`);
+      expect(revokeRes.status).toBe(200);
+
+      // Attempt upload with revoked extension token
+      const pngBytes = createSyntheticPng('REVOKED_UPLOAD_ATTEMPT');
+      const uploadRes = await request(app)
+        .post(`/api/cases/${caseAId}/evidence`)
+        .set('Authorization', `Bearer ${extensionToken}`)
+        .attach('file', pngBytes, 'revoked.png');
+
+      expect(uploadRes.status).toBe(401);
+      expect(uploadRes.body.error).toContain('Extension credential has been revoked');
+    });
+  });
+
+  // --- 2. P0: COMPLETE DISASTER RECOVERY & TRANSACTIONAL RESTORATION ---
+  describe('P0 — Full Disaster Recovery Backups & Transactional Restoration', () => {
+    let testCaseId;
+    let originalPngBytes;
+    let expectedSha256;
+    let backupFileName;
+
+    beforeAll(async () => {
+      // Create dedicated case with evidence, timeline, and custody records
+      const caseRes = await request(app)
+        .post('/api/cases')
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ title: 'Full DR Backup Target Case', summary: 'Critical evidence for disaster recovery test' });
+      testCaseId = caseRes.body.case.case_id;
+
+      originalPngBytes = createSyntheticPng('CRITICAL_VICTIM_FORENSIC_SNAPSHOT');
+      expectedSha256 = calculateSha256(originalPngBytes);
+
+      const evRes = await request(app)
+        .post(`/api/cases/${testCaseId}/evidence`)
+        .set('Authorization', `Bearer ${userAToken}`)
+        .attach('file', originalPngBytes, 'critical_snapshot.png')
+        .field('platform', 'Telegram');
+      expect(evRes.status).toBe(201);
+
+      // Add signed custody checkpoint
+      await request(app)
+        .post(`/api/cases/${testCaseId}/chain-of-custody/checkpoint`)
+        .set('Authorization', `Bearer ${userAToken}`);
+    });
+
+    it('Packages full disaster recovery backup including encrypted binary files on disk', async () => {
+      const backupRes = await request(app)
+        .post('/api/backup')
+        .set('Authorization', `Bearer ${userAToken}`);
+
+      expect(backupRes.status).toBe(200);
+      expect(backupRes.body.success).toBe(true);
+      expect(backupRes.body.filesCount).toBeGreaterThan(0);
+      expect(backupRes.body.custodyCount).toBeGreaterThan(0);
+      backupFileName = backupRes.body.backupFileName;
+    });
+
+    it('Restores backup transactionally with binary verification and custody chain integrity check', async () => {
+      const restoreRes = await request(app)
+        .post('/api/backup/restore')
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ backupFileName });
+
+      expect(restoreRes.status).toBe(200);
+      expect(restoreRes.body.success).toBe(true);
+      expect(restoreRes.body.restored.filesCount).toBeGreaterThan(0);
+
+      // Verify that the evidence file can be decrypted from vault storage and matches original bytes
+      const db = getDatabase();
+      const evFile = db.prepare('SELECT storage_path FROM evidence_files WHERE sha256_hash = ?').get(expectedSha256);
+      expect(evFile).toBeDefined();
+      expect(fs.existsSync(evFile.storage_path)).toBe(true);
+
+      // Verify chain of custody passes cryptographic verification
+      const chainCheck = verifyCaseAuditChain(testCaseId);
+      expect(chainCheck.valid).toBe(true);
+    });
+
+    it('Rejects cross-tenant backup restore attempt (User B cannot overwrite User A’s case)', async () => {
+      // User B attempts to restore User A's backup containing User A's case
+      const crossTenantRestore = await request(app)
+        .post('/api/backup/restore')
+        .set('Authorization', `Bearer ${userBToken}`)
+        .send({ backupFileName });
+
+      expect(crossTenantRestore.status).toBe(400);
+      expect(crossTenantRestore.body.error).toContain('Unauthorized cross-tenant overwrite rejected');
+    });
+
+    it('Rolls back cleanly with ZERO orphan files on disk when restore fails integrity check', async () => {
+      // 1. Create a dedicated case and evidence file for this rollback test
+      const rbCase = await request(app)
+        .post('/api/cases')
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ title: 'Rollback Zero Orphan Test Case' });
+      const rbCaseId = rbCase.body.case.case_id;
+
+      const pngPayload = createSyntheticPng('ROLLBACK_ORPHAN_PROBE');
+      await request(app)
+        .post(`/api/cases/${rbCaseId}/evidence`)
+        .set('Authorization', `Bearer ${userAToken}`)
+        .attach('file', pngPayload, 'rb_probe.png');
+
+      // 2. Export backup envelope
+      const backupRes = await request(app)
+        .post('/api/backup')
+        .set('Authorization', `Bearer ${userAToken}`);
+      expect(backupRes.status).toBe(200);
+      const bFileName = backupRes.body.backupFileName;
+      const bPath = path.join(__dirname, '../../../server/backups', bFileName);
+      const envelope = JSON.parse(fs.readFileSync(bPath, 'utf8'));
+
+      // 3. Decrypt backup data and add a unique corrupt evidence file entry that does not exist in vault
+      const restoredData = decryptBackup(envelope);
+      const uniqueCorruptId = `ev_orphan_probe_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+      const targetFileName = `${uniqueCorruptId}_v1.enc`;
+      const failedEf = {
+        file_id: `f_${Date.now()}`,
+        evidence_id: uniqueCorruptId,
+        version_num: 1,
+        file_type: 'image/png',
+        file_size: pngPayload.length,
+        sha256_hash: '0000000000000000000000000000000000000000000000000000000000000000', // corrupt hash triggers mismatch
+        fileDataCiphertextBase64: restoredData.evidence_files[0]?.fileDataCiphertextBase64 || Buffer.from('TEST').toString('base64'),
+        encryption_iv: restoredData.evidence_files[0]?.encryption_iv || '00'.repeat(12),
+        encryption_tag: restoredData.evidence_files[0]?.encryption_tag || '00'.repeat(16),
+        created_at: new Date().toISOString(),
+      };
+      restoredData.evidence_files.push(failedEf);
+      const tamperedEnvelope = encryptBackup(JSON.stringify(restoredData));
+
+      // 4. Attempt restore with tampered envelope (fails in step 4 hash verification)
+      const restoreFail = await request(app)
+        .post('/api/backup/restore')
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ backupEnvelope: tamperedEnvelope });
+
+      expect(restoreFail.status).toBe(400);
+      expect(restoreFail.body.error).toContain('Restoration Integrity Error: Hash mismatch');
+
+      // 5. Verify NO orphan files or staging directories exist in VAULT_DIR
+      const filesAfter = fs.readdirSync(VAULT_DIR);
+      expect(fs.existsSync(path.join(VAULT_DIR, targetFileName))).toBe(false);
+      expect(filesAfter.some((f) => f.includes('restore_staging'))).toBe(false);
+
+      // Verify database transaction rolled back
+      const db = getDatabase();
+      const orphanDbRecord = db.prepare('SELECT * FROM evidence_records WHERE evidence_id = ?').get(uniqueCorruptId);
+      expect(orphanDbRecord).toBeUndefined();
+    });
+
+    it('Refuses restore overwrite on statutory preservation-locked cases', async () => {
+      // Create and preservation-lock a case for User A
+      const lockCase = await request(app)
+        .post('/api/cases')
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ title: 'Locked Preservation Hold Case' });
+      const lockedCaseId = lockCase.body.case.case_id;
+
+      await request(app)
+        .patch(`/api/cases/${lockedCaseId}/preservation-lock`)
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ locked: true, reason: 'Statutory hold active' });
+
+      // Create a backup envelope attempting to overwrite this locked case
+      const backupData = {
+        meta: { version: '2.1.0-enterprise', ownerId: userAId },
+        cases: [{ case_id: lockedCaseId, owner_id: userAId, title: 'Mutated Case Overwrite' }],
+        evidence: [],
+        evidence_files: [],
+        custody: [],
+        custody_checkpoints: [],
+      };
+      const envelope = encryptBackup(JSON.stringify(backupData));
+
+      const restoreRes = await request(app)
+        .post('/api/backup/restore')
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ backupEnvelope: envelope });
+
+      expect(restoreRes.status).toBe(400);
+      expect(restoreRes.body.error).toContain('Case is protected under statutory preservation lock and cannot be overwritten');
+    });
+
+    it('Recovers interrupted promotions on restart via pending restore journal', async () => {
+      const db = getDatabase();
+      const crashRestoreId = `rst_crash_sim_${Date.now()}`;
+      const crashStagingDir = path.join(VAULT_DIR, `.restore_staging_${crashRestoreId}`);
+      fs.mkdirSync(crashStagingDir, { recursive: true });
+
+      const stagedFile = path.join(crashStagingDir, 'crash_sim_v1.enc');
+      const targetFile = path.join(VAULT_DIR, `crash_sim_promoted_${Date.now()}_v1.enc`);
+      fs.writeFileSync(stagedFile, 'ENCRYPTED_CRASH_TEST_PAYLOAD');
+
+      fs.writeFileSync(
+        path.join(crashStagingDir, 'staging_manifest.json'),
+        JSON.stringify({
+          restoreId: crashRestoreId,
+          stagedFiles: [{ stagedFilePath: stagedFile, targetStoragePath: targetFile, sha256: 'mock' }],
+        })
+      );
+
+      // Record simulated pending restore in database journal
+      db.prepare(`
+        INSERT INTO pending_restores (restore_id, staging_dir, status, created_at)
+        VALUES (?, ?, 'PENDING_PROMOTION', datetime('now'))
+      `).run(crashRestoreId, crashStagingDir);
+
+      // Run recovery mechanism (which runs automatically on server startup)
+      recoverPendingRestores(db);
+
+      // Verify file was promoted to permanent storage
+      expect(fs.existsSync(targetFile)).toBe(true);
+      expect(fs.readFileSync(targetFile, 'utf8')).toBe('ENCRYPTED_CRASH_TEST_PAYLOAD');
+
+      // Verify staging directory was cleaned up
+      expect(fs.existsSync(crashStagingDir)).toBe(false);
+
+      // Verify journal marked COMPLETED
+      const journalRow = db.prepare('SELECT status FROM pending_restores WHERE restore_id = ?').get(crashRestoreId);
+      expect(journalRow.status).toBe('COMPLETED');
+
+      // Cleanup target file
+      if (fs.existsSync(targetFile)) fs.unlinkSync(targetFile);
+    });
+  });
+
+  // --- 3. P1: CORS RESTRICTION & SUBDOMAIN REJECTION ---
+  describe('P1 — CORS Policy & Strict Origin Rejection', () => {
+    it('Permits authorized origin https://veratrace-app.vercel.app', async () => {
+      const res = await request(app)
+        .get('/api/health')
+        .set('Origin', 'https://veratrace-app.vercel.app');
+      expect(res.status).toBe(200);
+      expect(res.headers['access-control-allow-origin']).toBe('https://veratrace-app.vercel.app');
+    });
+
+    it('Rejects unapproved arbitrary vercel subdomains (e.g. attacker.vercel.app)', async () => {
+      const res = await request(app)
+        .get('/api/health')
+        .set('Origin', 'https://attacker.vercel.app');
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('CORS Policy: Origin https://attacker.vercel.app not allowed');
+    });
+
+    it('Rejects untrusted external domain', async () => {
+      const res = await request(app)
+        .get('/api/health')
+        .set('Origin', 'https://malicious-phishing.org');
+      expect(res.status).toBe(403);
+    });
+
+    it('Permits localhost origins when NODE_ENV is development or test', async () => {
+      const res = await request(app)
+        .get('/api/health')
+        .set('Origin', 'http://localhost:5173');
+      expect(res.status).toBe(200);
+      expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5173');
+    });
+
+    it('Rejects localhost origin when running with NODE_ENV=production', async () => {
+      const prevEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      try {
+        const prodApp = createServer();
+        const res = await request(prodApp)
+          .get('/api/health')
+          .set('Origin', 'http://localhost:5173');
+        expect(res.status).toBe(403);
+        expect(res.body.error).toContain('CORS Policy: Origin http://localhost:5173 not allowed');
+
+        // Verify production origin https://veratrace-app.vercel.app is accepted
+        const prodRes = await request(prodApp)
+          .get('/api/health')
+          .set('Origin', 'https://veratrace-app.vercel.app');
+        expect(prodRes.status).toBe(200);
+        expect(prodRes.headers['access-control-allow-origin']).toBe('https://veratrace-app.vercel.app');
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+      }
+    });
+  });
+
+  // --- 4. P1: AUTHENTICATION RATE LIMITING ---
+  describe('P1 — Authentication Rate Limiting', () => {
+    it('Enforces sliding-window rate limit on authentication endpoints after rapid requests', async () => {
+      const rateLimitApp = createServer();
+      const client = request(rateLimitApp);
+      let hit429 = false;
+
+      // Issue 15 consecutive login requests from same IP
+      for (let i = 0; i < 15; i++) {
+        const res = await client
+          .post('/api/auth/login')
+          .send({ username: 'nonexistent_rate_limit_probe', password: 'WrongPassword!' });
+        if (res.status === 429) {
+          hit429 = true;
+          expect(res.body.error).toContain('Too many authentication attempts');
+          expect(res.headers['retry-after']).toBeDefined();
+          break;
+        }
+      }
+
+      expect(hit429).toBe(true);
+    });
+  });
+
+  // --- 5. P1: STRICT TENANT ISOLATION ON UNOWNED CASES ---
+  describe('P1 — Case Ownership & Unowned Isolation', () => {
+    let unownedCaseId;
+
+    beforeAll(() => {
+      const db = getDatabase();
+      unownedCaseId = `unowned_${Date.now()}`;
+      db.prepare(`
+        INSERT INTO cases (case_id, owner_id, title, summary, status, created_at, updated_at)
+        VALUES (?, NULL, 'Legacy Demo Case Without Owner', 'Unassigned case', 'OPEN', datetime('now'), datetime('now'))
+      `).run(unownedCaseId);
+    });
+
+    it('Ordinary user cannot access an unowned case without ownership assignment (403)', async () => {
+      const res = await request(app)
+        .get(`/api/cases/${unownedCaseId}`)
+        .set('Authorization', `Bearer ${userAToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('Unowned case requires administrative assignment');
+    });
+
+    it('Unowned case does not appear in ordinary user case listing', async () => {
+      const res = await request(app)
+        .get('/api/cases')
+        .set('Authorization', `Bearer ${userAToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.cases.some((c) => c.case_id === unownedCaseId)).toBe(false);
+    });
+
+    it('Ordinary user cannot claim an unowned case (403 Forbidden)', async () => {
+      const claimRes = await request(app)
+        .post(`/api/cases/${unownedCaseId}/claim`)
+        .set('Authorization', `Bearer ${userAToken}`);
+
+      expect(claimRes.status).toBe(403);
+      expect(claimRes.body.error).toContain('Only administrators can claim or assign unowned legacy cases');
+    });
+
+    it('Ordinary user cannot access evidence belonging to an unowned case (403 Forbidden)', async () => {
+      const db = getDatabase();
+      const unownedEvidenceId = `ev_unowned_${Date.now()}`;
+      db.prepare(`
+        INSERT INTO evidence_records (
+          evidence_id, case_id, original_filename, file_type, file_size,
+          sha256_hash, submission_source, submission_method, upload_timestamp, active_version, integrity_status,
+          created_at, updated_at
+        ) VALUES (?, ?, 'unowned_leak_probe.png', 'image/png', 100, 'abc000', 'USER_SUBMITTED', 'BROWSER_INTAKE', datetime('now'), 1, 'VERIFIED', datetime('now'), datetime('now'))
+      `).run(unownedEvidenceId, unownedCaseId);
+
+      const evRes = await request(app)
+        .get(`/api/evidence/${unownedEvidenceId}/file`)
+        .set('Authorization', `Bearer ${userAToken}`);
+
+      expect(evRes.status).toBe(403);
+      expect(evRes.body.error).toContain('Access denied to evidence belonging to unowned case without admin role');
+    });
+
+    it('Administrator can explicitly assign unowned case to user', async () => {
+      const claimRes = await request(app)
+        .post(`/api/cases/${unownedCaseId}/claim`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ targetUserId: userAId });
+
+      expect(claimRes.status).toBe(200);
+      expect(claimRes.body.success).toBe(true);
+
+      // Now user A can access it
+      const accessRes = await request(app)
+        .get(`/api/cases/${unownedCaseId}`)
+        .set('Authorization', `Bearer ${userAToken}`);
+      expect(accessRes.status).toBe(200);
+      expect(accessRes.body.case.owner_id).toBe(userAId);
+    });
+  });
+
+  // --- 6. P1: TRUSTED CUSTODY CHECKPOINTS & KEY SUBSTITUTION DEFENSE ---
+  describe('P1 — Checkpoint Trusted Key Anchoring & Substitution Defense', () => {
+    it('Verifies genuine checkpoint signed with authoritative server key', async () => {
+      const db = getDatabase();
+      const caseId = `case_chk_${Date.now()}`;
+      db.prepare(`
+        INSERT INTO cases (case_id, owner_id, title, status, created_at, updated_at)
+        VALUES (?, ?, 'Checkpoint Test Case', 'OPEN', datetime('now'), datetime('now'))
+      `).run(caseId, userAId);
+
+      const checkpoint = createCustodyCheckpoint(caseId);
+
+      // Verify checkpoint against server authority
+      const verifyResult = verifyCustodyCheckpoint(checkpoint, true);
+      expect(verifyResult.verified).toBe(true);
+      expect(verifyResult.keyTrusted).toBe(true);
+      expect(verifyResult.signatureValid).toBe(true);
+    });
+
+    it('Detects and rejects public key substitution attack even if mathematically self-signed', async () => {
+      const db = getDatabase();
+      const caseId = `case_forgery_${Date.now()}`;
+      db.prepare(`
+        INSERT INTO cases (case_id, owner_id, title, status, created_at, updated_at)
+        VALUES (?, ?, 'Forgery Test Case', 'OPEN', datetime('now'), datetime('now'))
+      `).run(caseId, userAId);
+
+      // Attacker generates their own rogue Ed25519 keypair
+      const attackerKeys = crypto.generateKeyPairSync('ed25519');
+      const attackerPrivPem = attackerKeys.privateKey.export({ type: 'pkcs8', format: 'pem' });
+      const attackerPubPem = attackerKeys.publicKey.export({ type: 'spki', format: 'pem' });
+
+      const forgerId = `chk_forged_${Date.now()}`;
+      const ts = new Date().toISOString();
+      const msg = `checkpoint|${forgerId}|${caseId}|0000000000000000000000000000000000000000000000000000000000000000|0|${ts}`;
+      const attackerSig = crypto.sign(null, Buffer.from(msg, 'utf8'), attackerKeys.privateKey).toString('hex');
+
+      const forgedCheckpoint = {
+        checkpointId: forgerId,
+        caseId,
+        headEventHash: '0000000000000000000000000000000000000000000000000000000000000000',
+        eventCount: 0,
+        ed25519PublicKey: attackerPubPem,
+        ed25519Signature: attackerSig,
+        timestampUtc: ts,
+      };
+
+      // Verify using server authority — MUST fail key trust!
+      const result = verifyCustodyCheckpoint(forgedCheckpoint, true);
+      expect(result.keyTrusted).toBe(false);
+      expect(result.verified).toBe(false);
+      expect(result.untrustedKeyWarning).toContain('CRITICAL SECURITY ALERT: Checkpoint public key is UNTRUSTED');
+    });
+  });
+
+  // --- 7. P1: VAULT MASTER KEY SAFETY ---
+  describe('P1 — Vault Key Recovery & Silent Regeneration Safeguard', () => {
+    it('Refuses silent master key regeneration if encrypted vault files exist', () => {
+      // Create a dummy .enc file in vault_storage
+      const dummyEncPath = path.join(VAULT_DIR, `synthetic_test_${Date.now()}.enc`);
+      fs.writeFileSync(dummyEncPath, Buffer.from('ENCRYPTED_SYNTHETIC_CIPHERTEXT'));
+
+      // Temporarily rename master key file to simulate lost key
+      const tempKeyBackup = `${KEY_FILE}.bak_${Date.now()}`;
+      let backedUp = false;
+      if (fs.existsSync(KEY_FILE)) {
+        fs.renameSync(KEY_FILE, tempKeyBackup);
+        backedUp = true;
+      }
+      _resetVaultMasterKeyForTesting();
+
+      try {
+        // Attempting to call getVaultMasterKey must throw critical recovery error!
+        expect(() => {
+          getVaultMasterKey();
+        }).toThrow(/CRITICAL VAULT RECOVERY REQUIRED/);
+      } finally {
+        // Restore real key
+        if (backedUp && fs.existsSync(tempKeyBackup)) {
+          fs.renameSync(tempKeyBackup, KEY_FILE);
+        }
+        _resetVaultMasterKeyForTesting();
+        if (fs.existsSync(dummyEncPath)) {
+          fs.unlinkSync(dummyEncPath);
+        }
+      }
+    });
+  });
+
+  // --- 8. P2: SESSION REVOCATION & LOGOUT ---
+  describe('P2 — Token Revocation & Session Logout', () => {
+    it('Revokes user token upon logout, causing subsequent requests to fail with 401', async () => {
+      // 1. Issue a dedicated session for testing logout
+      const tempUser = `logout_user_${Date.now()}`;
+      const regRes = await request(app)
+        .post('/api/auth/register')
+        .send({ username: tempUser, password: 'SecurePassword123!' });
+      const tempToken = regRes.body.token;
+
+      // Verify token works
+      const beforeLogout = await request(app)
+        .get('/api/auth/me')
+        .set('Authorization', `Bearer ${tempToken}`);
+      expect(beforeLogout.status).toBe(200);
+
+      // 2. Perform logout
+      const logoutRes = await request(app)
+        .post('/api/auth/logout')
+        .set('Authorization', `Bearer ${tempToken}`);
+      expect(logoutRes.status).toBe(200);
+      expect(logoutRes.body.success).toBe(true);
+
+      // 3. Attempt request with revoked token
+      const afterLogout = await request(app)
+        .get('/api/auth/me')
+        .set('Authorization', `Bearer ${tempToken}`);
+      expect(afterLogout.status).toBe(401);
+      expect(afterLogout.body.error).toContain('Token has been revoked');
+    });
+  });
+
+  // --- 9. P0: WINDOWS NTFS ACL & KEY PERMISSIONS ---
+  describe('P0 — Windows NTFS ACL & Key Permission Hardening', () => {
+    it('Enforces strict permissions via secureKeyFilePermissions', () => {
+      const tempKeyFile = path.join(__dirname, `synthetic_key_${Date.now()}.key`);
+      fs.writeFileSync(tempKeyFile, 'CRYPTO_KEY_CONTENT_MOCK');
+      try {
+        const result = secureKeyFilePermissions(tempKeyFile);
+        expect(result).toBe(true);
+        expect(fs.existsSync(tempKeyFile)).toBe(true);
+      } finally {
+        if (fs.existsSync(tempKeyFile)) fs.unlinkSync(tempKeyFile);
+      }
+    });
+  });
+
+  // --- 10. P2: EXTENSION UPLOAD IDEMPOTENCY ---
+  describe('P2 — Extension Upload Idempotency & Duplicate Prevention', () => {
+    it('Replaying an upload with the same client evidenceId returns 200 idempotentReplay without creating duplicate records', async () => {
+      const caseRes = await request(app)
+        .post('/api/cases')
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ title: 'Idempotency Test Case' });
+      const caseId = caseRes.body.case.case_id;
+
+      const stableEvidenceId = `ev_test_${crypto.randomUUID()}`;
+      const pngPayload = createSyntheticPng('STABLE_IDEMPOTENCY_PAYLOAD');
+
+      // First upload
+      const upload1 = await request(app)
+        .post(`/api/cases/${caseId}/evidence`)
+        .set('Authorization', `Bearer ${userAToken}`)
+        .field('evidenceId', stableEvidenceId)
+        .field('submissionSource', 'EXTENSION_CAPTURE')
+        .attach('file', pngPayload, 'capture1.png');
+
+      expect(upload1.status).toBe(201);
+      expect(upload1.body.evidence.evidence_id).toBe(stableEvidenceId);
+
+      // Second upload (replay of the same evidenceId and file)
+      const upload2 = await request(app)
+        .post(`/api/cases/${caseId}/evidence`)
+        .set('Authorization', `Bearer ${userAToken}`)
+        .field('evidenceId', stableEvidenceId)
+        .field('submissionSource', 'EXTENSION_CAPTURE')
+        .attach('file', pngPayload, 'capture1.png');
+
+      expect(upload2.status).toBe(200);
+      expect(upload2.body.success).toBe(true);
+      expect(upload2.body.idempotentReplay).toBe(true);
+      expect(upload2.body.evidence.evidence_id).toBe(stableEvidenceId);
+
+      // Verify DB has exactly 1 row with this evidenceId
+      const db = getDatabase();
+      const count = db.prepare('SELECT count(*) as cnt FROM evidence_records WHERE evidence_id = ?').get(stableEvidenceId);
+      expect(count.cnt).toBe(1);
+    });
+  });
+
+  // --- 11. P1: DASHBOARD SESSION COOKIES & CSRF DEFENSE (DUAL AUTH) ---
+  describe('P1 — Dashboard Session Cookies & CSRF Protection (Dual Auth)', () => {
+    let sessionCookie;
+    let csrfCookie;
+    let csrfTokenValue;
+    const sessionUser = `cookie_user_${Date.now()}`;
+
+    it('Issues HttpOnly session cookie and CSRF cookie upon successful login', async () => {
+      // 1. Register user
+      await request(app)
+        .post('/api/auth/register')
+        .send({ username: sessionUser, password: 'Password123!' });
+
+      // 2. Login
+      const loginRes = await request(app)
+        .post('/api/auth/login')
+        .send({ username: sessionUser, password: 'Password123!' });
+
+      expect(loginRes.status).toBe(200);
+      expect(loginRes.body.csrfToken).toBeDefined();
+      csrfTokenValue = loginRes.body.csrfToken;
+
+      const setCookieHeaders = loginRes.headers['set-cookie'];
+      expect(setCookieHeaders).toBeDefined();
+
+      const sessionHeader = setCookieHeaders.find((c) => c.startsWith('veratrace_session='));
+      const csrfHeader = setCookieHeaders.find((c) => c.startsWith('veratrace_csrf='));
+
+      expect(sessionHeader).toBeDefined();
+      expect(sessionHeader).toContain('HttpOnly');
+      expect(sessionHeader).toContain('SameSite=Lax');
+
+      expect(csrfHeader).toBeDefined();
+      expect(csrfHeader).toContain('SameSite=Lax');
+
+      // Extract raw cookie key=val pairs for subsequent requests
+      sessionCookie = sessionHeader.split(';')[0];
+      csrfCookie = csrfHeader.split(';')[0];
+    });
+
+    it('Permits state-changing requests using session cookie and matching X-CSRF-Token header', async () => {
+      const caseRes = await request(app)
+        .post('/api/cases')
+        .set('Cookie', `${sessionCookie}; ${csrfCookie}`)
+        .set('X-CSRF-Token', csrfTokenValue)
+        .send({ title: 'Cookie Authenticated Incident' });
+
+      expect(caseRes.status).toBe(201);
+      expect(caseRes.body.case.title).toBe('Cookie Authenticated Incident');
+    });
+
+    it('Rejects state-changing requests using session cookie when X-CSRF-Token is missing (403 Forbidden)', async () => {
+      const caseRes = await request(app)
+        .post('/api/cases')
+        .set('Cookie', `${sessionCookie}; ${csrfCookie}`)
+        .send({ title: 'CSRF Attack Attempt' });
+
+      expect(caseRes.status).toBe(403);
+      expect(caseRes.body.error).toContain('CSRF token validation failed');
+    });
+
+    it('Rejects state-changing requests using session cookie when X-CSRF-Token is mismatched (403 Forbidden)', async () => {
+      const caseRes = await request(app)
+        .post('/api/cases')
+        .set('Cookie', `${sessionCookie}; ${csrfCookie}`)
+        .set('X-CSRF-Token', 'attacker_forged_csrf_token_000')
+        .send({ title: 'CSRF Forgery Attempt' });
+
+      expect(caseRes.status).toBe(403);
+      expect(caseRes.body.error).toContain('CSRF token validation failed');
+    });
+
+    it('Chrome extension with Bearer token continues to function without CSRF header (Separate Scopes)', async () => {
+      // Create case using Bearer token without any CSRF header
+      const bearerRes = await request(app)
+        .post('/api/cases')
+        .set('Authorization', `Bearer ${userAToken}`)
+        .send({ title: 'Bearer Direct Auth Case' });
+
+      expect(bearerRes.status).toBe(201);
+    });
+
+    it('Logout clears session and CSRF cookies', async () => {
+      const logoutRes = await request(app)
+        .post('/api/auth/logout')
+        .set('Cookie', `${sessionCookie}; ${csrfCookie}`)
+        .set('X-CSRF-Token', csrfTokenValue);
+
+      expect(logoutRes.status).toBe(200);
+      const setCookies = logoutRes.headers['set-cookie'];
+      expect(setCookies.some((c) => c.includes('veratrace_session=;'))).toBe(true);
+      expect(setCookies.some((c) => c.includes('veratrace_csrf=;'))).toBe(true);
+    });
+  });
+
+  // --- 12. P1: PASSWORD RECOVERY GROUNDWORK ---
+  describe('P1 — Password Recovery Groundwork (Zero Enumeration & Session Revocation)', () => {
+    const recoveryUser = `recovery_${Date.now()}`;
+    let recoveryToken;
+    let initialUserToken;
+
+    beforeAll(async () => {
+      const reg = await request(app)
+        .post('/api/auth/register')
+        .send({ username: recoveryUser, password: 'InitialPassword123!' });
+      initialUserToken = reg.body.token;
+    });
+
+    it('Forgot password returns identical generic message for existing user (Zero Enumeration)', async () => {
+      const res = await request(app)
+        .post('/api/auth/forgot-password')
+        .send({ username: recoveryUser });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toContain('If an account matches that username');
+      expect(res.body._testResetToken).toBeDefined();
+      recoveryToken = res.body._testResetToken;
+    });
+
+    it('Forgot password returns identical generic message for non-existent user (Zero Enumeration)', async () => {
+      const res = await request(app)
+        .post('/api/auth/forgot-password')
+        .send({ username: 'ghost_non_existent_user_99999' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toContain('If an account matches that username');
+      expect(res.body._testResetToken).toBeUndefined();
+    });
+
+    it('Successfully resets password with valid single-use token', async () => {
+      const resetRes = await request(app)
+        .post('/api/auth/reset-password')
+        .send({ token: recoveryToken, newPassword: 'BrandNewSecurePassword123!' });
+
+      expect(resetRes.status).toBe(200);
+      expect(resetRes.body.success).toBe(true);
+
+      // Verify user can now log in with the new password
+      const loginRes = await request(app)
+        .post('/api/auth/login')
+        .send({ username: recoveryUser, password: 'BrandNewSecurePassword123!' });
+      expect(loginRes.status).toBe(200);
+      expect(loginRes.body.token).toBeDefined();
+    });
+
+    it('Rejects reuse of already-consumed password reset token', async () => {
+      const reattemptRes = await request(app)
+        .post('/api/auth/reset-password')
+        .send({ token: recoveryToken, newPassword: 'AnotherPassword123!' });
+
+      expect(reattemptRes.status).toBe(400);
+      expect(reattemptRes.body.error).toContain('Invalid or already consumed');
+    });
+
+    it('Invalidates pre-existing session tokens issued prior to password reset', async () => {
+      // Attempting to access protected resource with initial token issued before password change
+      const meRes = await request(app)
+        .get('/api/auth/me')
+        .set('Authorization', `Bearer ${initialUserToken}`);
+
+      expect(meRes.status).toBe(401);
+      expect(meRes.body.error).toContain('Session invalidated due to password change');
+    });
+  });
+});
