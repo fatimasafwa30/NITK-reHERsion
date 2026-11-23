@@ -9,7 +9,9 @@
     "scripting"
   ],
   "host_permissions": [
-    "http://localhost:4000/*",
+    "http://localhost:*/*",
+    "http://127.0.0.1:*/*",
+    "https://*.vercel.app/*",
     "https://veratrace-app.vercel.app/*"
   ],
   "action": {

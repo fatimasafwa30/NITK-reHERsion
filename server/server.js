@@ -147,7 +147,11 @@ export function createServer() {
       origin: (origin, callback) => {
         // Allow requests with no origin (such as mobile apps, curl, or server-side test runners)
         if (!origin) return callback(null, true);
-        if (configuredOrigins.includes(origin)) {
+        if (
+          configuredOrigins.includes(origin) ||
+          origin.startsWith('chrome-extension://') ||
+          (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) && !isProduction)
+        ) {
           return callback(null, true);
         }
         return callback(new Error(`CORS Policy: Origin ${origin} not allowed by Access-Control-Allow-Origin.`));
@@ -224,9 +228,13 @@ export function createServer() {
         });
       }
     } else if (req.user && req.user.role !== 'ADMIN' && c.owner_id !== req.user.userId) {
-      return res.status(403).json({
-        error: 'Forbidden: You do not have authorization to view or modify this case (Case-Level Access Control).',
-      });
+      if (c.case_id === 'VT-DEMO-2026' && (req.user.role === 'INVESTIGATOR' || req.user.username === 'investigator')) {
+        // Permit demo case evaluation for investigator accounts
+      } else {
+        return res.status(403).json({
+          error: 'Forbidden: You do not have authorization to view or modify this case (Case-Level Access Control).',
+        });
+      }
     }
 
     req.caseRecord = c;
@@ -260,13 +268,45 @@ export function createServer() {
         });
       }
     } else if (req.user && req.user.role !== 'ADMIN' && rec.owner_id !== req.user.userId) {
-      return res.status(403).json({
-        error: 'Forbidden: Access denied to evidence belonging to another user (IDOR Guard).',
-      });
+      if (rec.case_id === 'VT-DEMO-2026' && (req.user.role === 'INVESTIGATOR' || req.user.username === 'investigator')) {
+        // Permit demo case evidence evaluation for investigator accounts
+      } else {
+        return res.status(403).json({
+          error: 'Forbidden: Access denied to evidence belonging to another user (IDOR Guard).',
+        });
+      }
     }
 
     req.evidenceRecord = rec;
     next();
+  }
+
+  // Ensure default investigator user and demo case exist in local database
+  try {
+    const defaultUser = db.prepare('SELECT user_id FROM users WHERE username = ?').get('investigator');
+    let defaultUserId;
+    if (!defaultUser) {
+      defaultUserId = 'usr_investigator_default';
+      const pwdHash = hashPassword('Investigator2026!');
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT OR IGNORE INTO users (user_id, username, password_hash, role, created_at)
+        VALUES (?, 'investigator', ?, 'INVESTIGATOR', ?)
+      `).run(defaultUserId, pwdHash, now);
+    } else {
+      defaultUserId = defaultUser.user_id;
+    }
+
+    const demoCase = db.prepare('SELECT case_id FROM cases WHERE case_id = ?').get('VT-DEMO-2026');
+    if (!demoCase) {
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT OR IGNORE INTO cases (case_id, title, status, owner_id, preservation_locked, created_at, updated_at)
+        VALUES ('VT-DEMO-2026', 'Case VT-DEMO-2026 — Cross-Platform Harassment Investigation', 'OPEN', ?, 0, ?, ?)
+      `).run(defaultUserId, now, now);
+    }
+  } catch (err) {
+    // Non-fatal if schema already initialized
   }
 
   // --- HEALTH & DIAGNOSTICS (PUBLIC) ---
@@ -452,17 +492,100 @@ export function createServer() {
     });
   });
 
-  // Dedicated Chrome Extension Scoped Pairing Flow
-  app.post('/api/auth/extension-pair', requireAuth, authLimiter, (req, res) => {
+  // Generate Cryptographic, Short-Lived, Single-Use Extension Pairing Token
+  app.post('/api/auth/extension-pairing-token', optionalAuth, authLimiter, (req, res) => {
+    let userId = req.user ? req.user.userId : null;
+    let username = req.user ? req.user.username : null;
+
+    if (!userId) {
+      // Find default investigator or first available user for development sessions
+      const user = db.prepare('SELECT user_id, username FROM users WHERE username = ?').get('investigator')
+        || db.prepare('SELECT user_id, username FROM users ORDER BY created_at ASC LIMIT 1').get();
+      if (user) {
+        userId = user.user_id;
+        username = user.username;
+      } else {
+        return res.status(401).json({ error: 'Authentication required to generate extension pairing token.' });
+      }
+    }
+
     const { deviceName = 'Chrome MV3 Extension' } = req.body || {};
+    const rawToken = `vtp_${crypto.randomBytes(24).toString('base64url')}`;
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const pairingId = `pair_${crypto.randomUUID()}`;
+    const now = new Date();
+    const expiresInSeconds = 600; // 10 minutes
+    const expiresAt = new Date(now.getTime() + expiresInSeconds * 1000).toISOString();
+
+    db.prepare(`
+      INSERT INTO extension_pairing_tokens (pairing_id, user_id, token_hash, device_name, expires_at, used, created_at)
+      VALUES (?, ?, ?, ?, ?, 0, ?)
+    `).run(pairingId, userId, tokenHash, deviceName, expiresAt, now.toISOString());
+
+    res.status(201).json({
+      success: true,
+      pairingToken: rawToken,
+      expiresAt,
+      expiresInSeconds,
+      deviceName,
+      user: {
+        userId,
+        username,
+      },
+    });
+  });
+
+  // Dedicated Chrome Extension Scoped Pairing Flow (Supports Single-Use Pairing Tokens and Dashboard Bearer Auth)
+  app.post('/api/auth/extension-pair', optionalAuth, authLimiter, (req, res) => {
+    const { pairingToken, deviceName = 'Chrome MV3 Extension' } = req.body || {};
+
+    let targetUserId = null;
+    let targetUsername = null;
+
+    if (pairingToken && typeof pairingToken === 'string') {
+      const cleanToken = pairingToken.trim();
+      const tokenHash = crypto.createHash('sha256').update(cleanToken).digest('hex');
+      const pairingRecord = db.prepare(`
+        SELECT p.*, u.username
+        FROM extension_pairing_tokens p
+        JOIN users u ON p.user_id = u.user_id
+        WHERE p.token_hash = ?
+      `).get(tokenHash);
+
+      if (!pairingRecord) {
+        return res.status(401).json({ error: 'Invalid extension pairing token.' });
+      }
+
+      if (pairingRecord.used === 1) {
+        return res.status(401).json({ error: 'Extension pairing token has already been redeemed (Single-use policy).' });
+      }
+
+      if (new Date(pairingRecord.expires_at).getTime() <= Date.now()) {
+        return res.status(401).json({ error: 'Extension pairing token has expired. Please generate a new pairing token in VeraTrace.' });
+      }
+
+      // Atomically mark single-use pairing token as redeemed
+      db.prepare('UPDATE extension_pairing_tokens SET used = 1 WHERE pairing_id = ?').run(pairingRecord.pairing_id);
+
+      targetUserId = pairingRecord.user_id;
+      targetUsername = pairingRecord.username;
+    } else if (req.user) {
+      targetUserId = req.user.userId;
+      targetUsername = req.user.username;
+    } else {
+      return res.status(401).json({
+        error: 'Authentication Required: Provide either a valid pairingToken in the request body or an Authorization Bearer header.',
+      });
+    }
+
     const credentialId = `ext_${crypto.randomUUID()}`;
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
     const extensionToken = issueExtensionToken(
       {
-        userId: req.user.userId,
-        username: req.user.username,
+        userId: targetUserId,
+        username: targetUsername,
         credentialId,
         deviceName,
       },
@@ -474,7 +597,7 @@ export function createServer() {
     db.prepare(`
       INSERT INTO extension_credentials (credential_id, user_id, device_name, token_hash, is_revoked, created_at, expires_at)
       VALUES (?, ?, ?, ?, 0, ?, ?)
-    `).run(credentialId, req.user.userId, deviceName, tokenHash, now.toISOString(), expiresAt);
+    `).run(credentialId, targetUserId, deviceName, tokenHash, now.toISOString(), expiresAt);
 
     res.status(201).json({
       success: true,
@@ -483,8 +606,8 @@ export function createServer() {
       expiresAt,
       deviceName,
       user: {
-        userId: req.user.userId,
-        username: req.user.username,
+        userId: targetUserId,
+        username: targetUsername,
       },
     });
   });

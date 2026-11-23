@@ -20,6 +20,11 @@ import {
   ArrowRight,
   ArrowLeft,
   FileSearch,
+  Key,
+  Copy,
+  Laptop,
+  Trash2,
+  Clock,
 } from 'lucide-react';
 import { useVera } from '../store/VeraStore';
 import { useToast } from '../store/ToastProvider';
@@ -27,7 +32,14 @@ import { Button } from '../components/ui/Button';
 import { CopyButton } from '../components/HashDisplay';
 import { sha256File, MAX_FILE_BYTES } from '../lib/hash';
 import { formatBytes, formatDateTime } from '../lib/format';
-import { isBackendOnline, sealEvidenceToBackend } from '../services/apiClient';
+import {
+  isBackendOnline,
+  sealEvidenceToBackend,
+  generateExtensionPairingToken,
+  getExtensionCredentials,
+  revokeExtensionCredential,
+  BACKEND_URL,
+} from '../services/apiClient';
 
 const SUPPORTED_EXTENSIONS = [
   'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp',
@@ -91,6 +103,21 @@ export function EvidenceCapture() {
   const [extensionStatus, setExtensionStatus] = useState('CHECKING'); // 'CHECKING' | 'CONNECTED' | 'NOT_DETECTED'
   const [extensionError, setExtensionError] = useState(null);
   const [capturingTab, setCapturingTab] = useState(false);
+  const [activeExtensionToken, setActiveExtensionToken] = useState(() => {
+    try {
+      return localStorage.getItem('veratrace_extension_token') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [pairedUserInfo, setPairedUserInfo] = useState(() => {
+    try {
+      const raw = localStorage.getItem('veratrace_paired_user');
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  });
 
   // File & Hash State (Original file preserved)
   const [selectedFile, setSelectedFile] = useState(null);
@@ -113,6 +140,15 @@ export function EvidenceCapture() {
   const [sealing, setSealing] = useState(false);
   const [sealingError, setSealingError] = useState(null);
   const [sealedDetails, setSealedDetails] = useState(null);
+
+  // Extension Pairing Modal State
+  const [showPairingModal, setShowPairingModal] = useState(false);
+  const [pairingToken, setPairingToken] = useState('');
+  const [pairingExpiry, setPairingExpiry] = useState('');
+  const [generatingToken, setGeneratingToken] = useState(false);
+  const [pairedCredentials, setPairedCredentials] = useState([]);
+  const [loadingCredentials, setLoadingCredentials] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
 
   // Expandable Help & Troubleshooting State
   const [showHelp, setShowHelp] = useState(false);
@@ -141,8 +177,24 @@ export function EvidenceCapture() {
 
     const handleMessage = (event) => {
       if (event.source !== window || !event.data || typeof event.data !== 'object') return;
-      if (event.data.type === 'VERATRACE_PONG_EXTENSION' || event.data.type === 'VERATRACE_EXTENSION_READY') {
+      if (
+        event.data.type === 'VERATRACE_PONG_EXTENSION' ||
+        event.data.type === 'VERATRACE_EXTENSION_READY' ||
+        event.data.type === 'VERATRACE_EXTENSION_AUTH_STATE'
+      ) {
         if (!unmounted) setExtensionStatus('CONNECTED');
+        if (event.data.extensionToken) {
+          setActiveExtensionToken(event.data.extensionToken);
+          try {
+            localStorage.setItem('veratrace_extension_token', event.data.extensionToken);
+          } catch {}
+        }
+        if (event.data.pairedUser) {
+          setPairedUserInfo(event.data.pairedUser);
+          try {
+            localStorage.setItem('veratrace_paired_user', JSON.stringify(event.data.pairedUser));
+          } catch {}
+        }
       }
     };
 
@@ -255,6 +307,116 @@ export function EvidenceCapture() {
     setStage('REVIEW');
   }, [previewUrl]);
 
+  // Listen for evidence pushed from the extension popup (e.g. "Send to App" from external tab)
+  useEffect(() => {
+    const handleCaptureReceived = (event) => {
+      if (event.source !== window || !event.data || typeof event.data !== 'object') return;
+      if (event.data.type === 'VERATRACE_CAPTURE_RECEIVED') {
+        const {
+          dataUrl,
+          url,
+          timestamp,
+          platform: incomingPlatform,
+          senderHandle: incomingHandle,
+          notes: incomingNotes,
+        } = event.data;
+        if (!dataUrl) return;
+
+        try {
+          const arr = dataUrl.split(',');
+          const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
+          const bstr = atob(arr[1]);
+          let n = bstr.length;
+          const u8arr = new Uint8Array(n);
+          while (n--) {
+            u8arr[n] = bstr.charCodeAt(n);
+          }
+          const blob = new Blob([u8arr], { type: mime });
+          const capturedFilename = `tab_capture_${Date.now()}.png`;
+          const file = new File([blob], capturedFilename, { type: 'image/png' });
+
+          const capturedTimestamp = timestamp
+            ? getLocalDatetimeString(new Date(timestamp))
+            : getLocalDatetimeString();
+
+          setCaptureTimestamp(capturedTimestamp);
+          if (incomingPlatform) setPlatform(incomingPlatform);
+          if (incomingHandle) setSenderHandle(incomingHandle);
+          if (incomingNotes) setContextNotes(incomingNotes);
+
+          if (event.data.extensionToken) {
+            setActiveExtensionToken(event.data.extensionToken);
+            try {
+              localStorage.setItem('veratrace_extension_token', event.data.extensionToken);
+            } catch {}
+          }
+          if (event.data.pairedUser) {
+            setPairedUserInfo(event.data.pairedUser);
+            try {
+              localStorage.setItem('veratrace_paired_user', JSON.stringify(event.data.pairedUser));
+            } catch {}
+          }
+
+          processSelectedFile(file, 'EXTENSION_CAPTURE', 'CHROME_EXT_MV3', url || '');
+          toast('Evidence received from VeraTrace Companion Extension! Review before sealing.', { tone: 'success' });
+        } catch (err) {
+          console.error('Failed to process incoming capture from extension:', err);
+          toast(`Could not process incoming capture: ${err.message}`, { tone: 'error' });
+        }
+      }
+    };
+
+    window.addEventListener('message', handleCaptureReceived);
+    return () => window.removeEventListener('message', handleCaptureReceived);
+  }, [processSelectedFile]);
+
+  // Extension Pairing Helpers
+  const fetchCredentialsList = async () => {
+    setLoadingCredentials(true);
+    try {
+      const res = await getExtensionCredentials();
+      setPairedCredentials(res?.credentials || []);
+    } catch {
+      setPairedCredentials([]);
+    } finally {
+      setLoadingCredentials(false);
+    }
+  };
+
+  const handleGeneratePairingToken = async () => {
+    setGeneratingToken(true);
+    try {
+      const res = await generateExtensionPairingToken('Chrome MV3 Extension');
+      if (res?.pairingToken) {
+        setPairingToken(res.pairingToken);
+        setPairingExpiry(new Date(res.expiresAt).toLocaleTimeString());
+        toast('Cryptographic extension pairing token generated (Valid 10 mins).', { tone: 'success' });
+      }
+    } catch (err) {
+      toast(`Failed to generate pairing token: ${err.message}`, { tone: 'error' });
+    } finally {
+      setGeneratingToken(false);
+    }
+  };
+
+  const handleCopyPairingToken = () => {
+    if (!pairingToken) return;
+    navigator.clipboard.writeText(pairingToken);
+    setCopySuccess(true);
+    toast('Pairing token copied to clipboard!', { tone: 'success' });
+    setTimeout(() => setCopySuccess(false), 3000);
+  };
+
+  const handleRevokeCredential = async (credentialId) => {
+    try {
+      await revokeExtensionCredential(credentialId);
+      toast('Extension credential revoked successfully.', { tone: 'info' });
+      fetchCredentialsList();
+    } catch (err) {
+      toast(`Failed to revoke credential: ${err.message}`, { tone: 'error' });
+    }
+  };
+
   // 2. Action: Capture Visible Active Tab via Companion Extension
   const handleCaptureCurrentTab = async () => {
     setExtensionError(null);
@@ -298,6 +460,19 @@ export function EvidenceCapture() {
           const capturedTimestamp = event.data.timestamp
             ? getLocalDatetimeString(new Date(event.data.timestamp))
             : getLocalDatetimeString();
+
+          if (event.data.extensionToken) {
+            setActiveExtensionToken(event.data.extensionToken);
+            try {
+              localStorage.setItem('veratrace_extension_token', event.data.extensionToken);
+            } catch {}
+          }
+          if (event.data.pairedUser) {
+            setPairedUserInfo(event.data.pairedUser);
+            try {
+              localStorage.setItem('veratrace_paired_user', JSON.stringify(event.data.pairedUser));
+            } catch {}
+          }
 
           setCaptureTimestamp(capturedTimestamp);
           processSelectedFile(file, 'EXTENSION_CAPTURE', 'CHROME_EXT_MV3', capturedUrl);
@@ -446,7 +621,10 @@ export function EvidenceCapture() {
       formData.append('submissionMethod', submissionMethod);
 
       // 2. Transmit to real backend vault storage
-      const serverResponse = await sealEvidenceToBackend(caseId, formData);
+      const effectiveToken = activeExtensionToken
+        || (typeof window !== 'undefined' ? (window.localStorage?.getItem('veratrace_extension_token') || window.localStorage?.getItem('veratrace_token')) : null);
+
+      const serverResponse = await sealEvidenceToBackend(caseId, formData, effectiveToken);
 
       const serverEvidence = serverResponse?.evidence || {};
 
@@ -489,8 +667,15 @@ export function EvidenceCapture() {
       setStage('SUCCESS');
       toast('Evidence sealed with SHA-256 fingerprint in Case Vault.', { tone: 'success' });
     } catch (err) {
-      setSealingError(`Vault Ingestion Rejected: ${err.message}`);
-      toast(`Sealing failed: ${err.message}`, { tone: 'error' });
+      const msg = err.message || '';
+      if (msg.includes('Missing or malformed Authorization header or session cookie') || msg.includes('Authentication Required')) {
+        setSealingError(
+          'Vault Ingestion Rejected: Authentication Required. The companion extension must be paired with your case vault, or you must be signed in. Please click "Connect Extension / Pairing Token" below to pair your extension and retry.'
+        );
+      } else {
+        setSealingError(`Vault Ingestion Rejected: ${msg}`);
+      }
+      toast(`Sealing failed: ${msg}`, { tone: 'error' });
     } finally {
       setSealing(false);
     }
@@ -673,6 +858,18 @@ export function EvidenceCapture() {
                     </>
                   )}
                 </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    setShowPairingModal(true);
+                    fetchCredentialsList();
+                  }}
+                  className="w-full mt-2.5 border-lilac text-plum hover:border-violet"
+                >
+                  <Key className="size-4 mr-2 text-violet-deep" />
+                  Connect Extension / Pairing Token
+                </Button>
                 {extensionStatus === 'NOT_DETECTED' && (
                   <p className="mt-2 text-center text-[10px] text-amber-800">
                     Extension not detected. Click below for installation steps.
@@ -824,6 +1021,50 @@ export function EvidenceCapture() {
               </button>
             </div>
           )}
+
+          {/* Authentication & Ingestion State Badge */}
+          {activeExtensionToken ? (
+            <div className="rounded-lg border border-emerald-300 bg-emerald-50/70 p-3.5 text-xs text-emerald-900 shadow-sm flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <ShieldCheck className="size-4.5 text-emerald-600 shrink-0" />
+                <div>
+                  <span className="font-semibold block text-emerald-950">Authenticated Ingestion Active</span>
+                  <span className="text-[11px] text-emerald-800">
+                    Scoped Bearer token active for <strong className="font-mono">@{pairedUserInfo?.username || 'investigator'}</strong>
+                    {pairedUserInfo?.credentialId && ` (Credential: ${pairedUserInfo.credentialId})`}
+                  </span>
+                </div>
+              </div>
+              <span className="mono text-[10px] font-semibold text-emerald-700 bg-emerald-100/80 px-2.5 py-1 rounded-full border border-emerald-300/80 shrink-0">
+                Extension Paired
+              </span>
+            </div>
+          ) : submissionMethod === 'CHROME_EXT_MV3' ? (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-900 shadow-sm flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <AlertCircle className="size-4.5 text-amber-600 shrink-0" />
+                <div>
+                  <span className="font-semibold block text-amber-950">Companion Extension Not Paired</span>
+                  <span className="text-[11px] text-amber-800">
+                    Pair your companion extension to authenticate evidence ingestion into the encrypted Case Vault.
+                  </span>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setShowPairingModal(true);
+                  fetchCredentialsList();
+                }}
+                className="shrink-0 border-amber-300 text-amber-900 hover:bg-amber-100"
+              >
+                <Key className="size-3.5 mr-1 text-amber-700" />
+                Pair Extension
+              </Button>
+            </div>
+          ) : null}
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
             {/* Left Column: Artifact Preview & Cryptographic Verification */}
@@ -1116,6 +1357,180 @@ export function EvidenceCapture() {
             >
               Ingest Another Item
             </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Extension Pairing Modal */}
+      {showPairingModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-plum/40 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="rounded-xl border border-lilac bg-paper p-6 shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="flex size-9 items-center justify-center rounded-md bg-wash text-violet-deep border border-lilac">
+                  <Key className="size-4.5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-plum">Connect Chrome Extension</h3>
+                  <p className="text-[11px] text-muted">Cryptographic Pairing & Scoped Ingestion Credentials</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPairingModal(false)}
+                className="text-muted hover:text-plum p-1 rounded-md transition-colors"
+                aria-label="Close dialog"
+              >
+                <X className="size-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-muted leading-relaxed mb-4">
+              Generate a short-lived, single-use cryptographic pairing token to connect the VeraTrace Chrome extension with your case vault. The extension receives scoped ingestion permissions without exposing master vault keys or session cookies.
+            </p>
+
+            {/* Generated Pairing Token Box */}
+            {pairingToken ? (
+              <div className="rounded-lg border border-emerald-300 bg-emerald-50/60 p-4 mb-4">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <span className="text-[11px] font-semibold text-emerald-800 flex items-center gap-1.5">
+                    <CheckCircle2 className="size-3.5 text-emerald-600" />
+                    Pairing Token Generated
+                  </span>
+                  <span className="text-[10px] text-emerald-700 mono">
+                    Expires at {pairingExpiry} (10m)
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 bg-paper border border-emerald-200 rounded-md p-2.5 text-xs mono text-plum break-all select-all font-mono">
+                    {pairingToken}
+                  </div>
+                  <Button
+                    type="button"
+                    variant={copySuccess ? 'quiet' : 'secondary'}
+                    size="sm"
+                    onClick={handleCopyPairingToken}
+                    className="shrink-0"
+                  >
+                    {copySuccess ? (
+                      <>
+                        <CheckCircle2 className="size-3.5 text-emerald-600 mr-1" />
+                        Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="size-3.5 mr-1 text-violet-deep" />
+                        Copy
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                <div className="mt-3 text-[11px] text-emerald-900 bg-white/60 p-2.5 rounded border border-emerald-200/80 space-y-1">
+                  <span className="font-semibold block">Pairing Steps:</span>
+                  <ol className="list-decimal list-inside space-y-0.5 text-[11px] text-emerald-800">
+                    <li>Open the <strong>VeraTrace extension popup</strong> in your Chrome toolbar.</li>
+                    <li>Switch to the <strong>Pairing</strong> tab.</li>
+                    <li>Paste this token into the input and click <strong>Connect & Pair Extension</strong>.</li>
+                  </ol>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="flex items-center gap-3 mb-6">
+              <Button
+                type="button"
+                variant="primary"
+                onClick={handleGeneratePairingToken}
+                disabled={generatingToken}
+                className="w-full"
+              >
+                {generatingToken ? (
+                  <>
+                    <RefreshCw className="size-4 animate-spin mr-2" />
+                    Generating Pairing Token...
+                  </>
+                ) : (
+                  <>
+                    <Key className="size-4 mr-2" />
+                    {pairingToken ? 'Generate New Pairing Token' : 'Generate Extension Pairing Token'}
+                  </>
+                )}
+              </Button>
+            </div>
+
+            {/* Paired Devices List */}
+            <div className="border-t border-lilac pt-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-semibold text-plum flex items-center gap-1.5">
+                  <Laptop className="size-3.5 text-violet-deep" />
+                  Active Paired Credentials
+                </span>
+                <button
+                  type="button"
+                  onClick={fetchCredentialsList}
+                  disabled={loadingCredentials}
+                  className="text-[11px] text-violet-deep hover:underline flex items-center gap-1"
+                >
+                  <RefreshCw className={`size-3 ${loadingCredentials ? 'animate-spin' : ''}`} />
+                  Refresh
+                </button>
+              </div>
+
+              {loadingCredentials ? (
+                <p className="text-[11px] text-muted text-center py-2">Loading registered credentials...</p>
+              ) : pairedCredentials.length === 0 ? (
+                <p className="text-[11px] text-muted text-center py-3 rounded-md bg-wash/50 border border-lilac/50">
+                  No paired extension credentials currently active for this account.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {pairedCredentials.map((cred) => (
+                    <div
+                      key={cred.credential_id}
+                      className="flex items-center justify-between p-2.5 rounded-lg border border-lilac/70 bg-wash/40 text-xs"
+                    >
+                      <div>
+                        <div className="flex items-center gap-1.5 font-medium text-plum">
+                          <span>{cred.device_name || 'Chrome MV3 Extension'}</span>
+                          {cred.is_revoked === 0 ? (
+                            <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-semibold">Active</span>
+                          ) : (
+                            <span className="text-[9px] bg-red-100 text-red-800 px-1.5 py-0.2 rounded font-semibold">Revoked</span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-muted mono mt-0.5">
+                          ID: {cred.credential_id} · Paired: {formatDateTime(cred.created_at)}
+                        </div>
+                      </div>
+
+                      {cred.is_revoked === 0 && (
+                        <button
+                          type="button"
+                          onClick={() => handleRevokeCredential(cred.credential_id)}
+                          className="text-alert hover:text-alert/80 p-1 rounded hover:bg-alert-wash transition-colors"
+                          title="Revoke extension access"
+                          aria-label={`Revoke credential ${cred.credential_id}`}
+                        >
+                          <Trash2 className="size-4" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-5 pt-3 border-t border-lilac/60 flex justify-end">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowPairingModal(false)}
+              >
+                Done
+              </Button>
+            </div>
           </div>
         </div>
       )}

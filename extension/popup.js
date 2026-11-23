@@ -9,10 +9,21 @@
  * 5. Review & context annotation before upload
  */
 
-const API_BASE = 'http://localhost:4000/api';
-
 let currentCapture = null;
 let activeTab = null;
+
+// Dynamic API Base URL resolution
+async function getApiBase() {
+  return new Promise((resolve) => {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.get(['apiUrl'], (res) => {
+        resolve(res.apiUrl || 'http://localhost:4000/api');
+      });
+    } else {
+      resolve(localStorage.getItem('veratrace_api_url') || 'http://localhost:4000/api');
+    }
+  });
+}
 
 // Auth / Extension Storage Helpers
 async function getStoredAuth() {
@@ -178,13 +189,14 @@ function detectPlatformFromUrl(url = '') {
 async function fetchCases() {
   const select = document.getElementById('case-select');
   const auth = await getStoredAuth();
+  const apiBase = await getApiBase();
   const headers = {};
   if (auth.token) {
     headers['Authorization'] = `Bearer ${auth.token}`;
   }
 
   try {
-    const res = await fetch(`${API_BASE}/cases`, { headers });
+    const res = await fetch(`${apiBase}/cases`, { headers });
     if (res.ok) {
       const data = await res.json();
       if (data.cases && data.cases.length > 0) {
@@ -214,7 +226,11 @@ async function fetchCases() {
   } catch (err) {
     // Backend offline / standalone mode
     const badge = document.getElementById('conn-badge');
-    if (badge) badge.textContent = 'Offline Vault';
+    if (badge) {
+      badge.textContent = 'Offline Vault (Local Mode)';
+      badge.style.backgroundColor = '#F3F4F6';
+      badge.style.color = '#4B5563';
+    }
   }
 }
 
@@ -227,25 +243,85 @@ document.getElementById('btn-save-pairing')?.addEventListener('click', async () 
     return;
   }
 
+  const apiBase = await getApiBase();
+
+  // 1. Single-use short-lived pairing token (vtp_...) exchange flow
+  if (token.startsWith('vtp_')) {
+    try {
+      showNotification('Exchanging pairing token with VeraTrace vault...', 'info', 2000);
+      const res = await fetch(`${apiBase}/auth/extension-pair`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pairingToken: token,
+          deviceName: 'Chrome MV3 Extension',
+        }),
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        showNotification(`Pairing Rejected (${res.status}): ${errJson.error || 'Failed to exchange token.'}`, 'error', 8000);
+        return;
+      }
+
+      const data = await res.json();
+      const userObj = {
+        userId: data.user.userId,
+        username: data.user.username,
+        credentialId: data.credentialId,
+        expiresAt: data.expiresAt,
+      };
+
+      await setStoredAuth(data.extensionToken, userObj);
+      if (input) input.value = '';
+      await updatePairingUi();
+      await fetchCases();
+      showNotification(`Successfully paired with VeraTrace as @${userObj.username}!`, 'success', 5000);
+      document.querySelector('[data-tab="tab-capture"]')?.click();
+      return;
+    } catch (err) {
+      showNotification(`Connection error: ${err.message}. Ensure backend is running at ${apiBase}.`, 'error', 8000);
+      return;
+    }
+  }
+
+  // 2. Direct Scoped JWT Extension Token format fallback
   const payload = parseTokenPayload(token);
-  if (!payload || !payload.userId) {
-    showNotification('Invalid token structure. Please copy a valid scoped token.', 'error');
+  if (payload && payload.userId) {
+    const userObj = {
+      userId: payload.userId,
+      username: payload.username || 'User',
+      credentialId: payload.credentialId || 'token',
+      expiresAt: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
+    };
+
+    await setStoredAuth(token, userObj);
+    if (input) input.value = '';
+    await updatePairingUi();
+    await fetchCases();
+    showNotification(`Successfully paired with VeraTrace as @${userObj.username}!`, 'success', 5000);
+    document.querySelector('[data-tab="tab-capture"]')?.click();
     return;
   }
 
-  const userObj = {
-    userId: payload.userId,
-    username: payload.username || 'User',
-    credentialId: payload.credentialId || 'token',
-    expiresAt: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
-  };
+  showNotification('Invalid token structure. Paste a valid token generated in VeraTrace.', 'error', 6000);
+});
 
-  await setStoredAuth(token, userObj);
-  if (input) input.value = '';
-  await updatePairingUi();
-  await fetchCases();
-  showNotification(`Successfully paired with VeraTrace as @${userObj.username}!`, 'success');
-  document.querySelector('[data-tab="tab-capture"]')?.click();
+// Save custom Backend API URL
+document.getElementById('btn-save-api-url')?.addEventListener('click', async () => {
+  const urlInput = document.getElementById('api-url-input');
+  const urlVal = urlInput?.value?.trim();
+  if (!urlVal) return;
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.set({ apiUrl: urlVal }, () => {
+      showNotification(`API endpoint updated: ${urlVal}`, 'success', 3000);
+      fetchCases();
+    });
+  } else {
+    localStorage.setItem('veratrace_api_url', urlVal);
+    showNotification(`API endpoint updated: ${urlVal}`, 'success', 3000);
+    fetchCases();
+  }
 });
 
 document.getElementById('btn-unpair')?.addEventListener('click', async () => {
@@ -266,7 +342,19 @@ document.getElementById('btn-capture-tab')?.addEventListener('click', async () =
       throw new Error('Chrome extension tabs API is not available in standalone preview.');
     }
 
-    const dataUrl = await chrome.tabs.captureVisibleTab(null, { format: 'png' });
+    // Query active tab in the focused window
+    if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
+      const [currentActive] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (currentActive) {
+        activeTab = currentActive;
+      }
+    }
+
+    const captureOptions = { format: 'png' };
+    const winId = activeTab?.windowId;
+    const dataUrl = typeof winId === 'number'
+      ? await chrome.tabs.captureVisibleTab(winId, captureOptions)
+      : await chrome.tabs.captureVisibleTab(captureOptions);
     const blob = dataUrlToBlob(dataUrl);
     const arrayBuffer = await blob.arrayBuffer();
     const sha256 = await computeSha256(arrayBuffer);
@@ -312,7 +400,140 @@ document.getElementById('btn-discard')?.addEventListener('click', () => {
   document.querySelector('[data-tab="tab-capture"]').click();
 });
 
-// Inline Notification System (Replaces disruptive window.alert/confirm)
+// 1. Relay captured evidence to an open VeraTrace web app tab
+document.getElementById('btn-send-to-webapp')?.addEventListener('click', async () => {
+  if (!currentCapture) return;
+
+  const btn = document.getElementById('btn-send-to-webapp');
+  btn.disabled = true;
+  btn.textContent = 'Relaying...';
+
+  try {
+    if (typeof chrome === 'undefined' || !chrome.tabs || !chrome.tabs.query) {
+      showNotification('Chrome tabs API not available in standalone mode.', 'error');
+      btn.disabled = false;
+      btn.textContent = 'Send to App →';
+      return;
+    }
+
+    const tabs = await chrome.tabs.query({
+      url: [
+        'https://veratrace-app.vercel.app/*',
+        'https://*.vercel.app/*',
+        'http://localhost:*/*',
+        'http://127.0.0.1:*/*',
+      ],
+    });
+
+    if (!tabs || tabs.length === 0) {
+      showNotification('No open VeraTrace web app tab found. Please open VeraTrace in another tab first.', 'info', 6000);
+      btn.disabled = false;
+      btn.textContent = 'Send to App →';
+      return;
+    }
+
+    // Prefer a tab with /case/ or /capture in the URL
+    const targetTab = tabs.find((t) => t.url && (t.url.includes('/case/') || t.url.includes('/capture'))) || tabs[0];
+
+    // Check paired extension credentials
+    const auth = await getStoredAuth();
+    if (!auth || !auth.token) {
+      showNotification('Authentication Required: Please pair this extension in the Pairing tab before sending evidence to the web app for vault sealing.', 'error', 6000);
+      btn.disabled = false;
+      btn.textContent = 'Send to App →';
+      document.getElementById('tab-pairing-btn')?.click();
+      return;
+    }
+
+    const payload = {
+      action: 'VERATRACE_CAPTURE_RECEIVED',
+      dataUrl: currentCapture.dataUrl,
+      url: currentCapture.url,
+      title: currentCapture.title,
+      timestamp: currentCapture.captureTimestamp,
+      sha256: currentCapture.sha256,
+      platform: document.getElementById('evidence-platform')?.value || 'Other',
+      senderHandle: document.getElementById('sender-handle')?.value || '',
+      notes: document.getElementById('context-notes')?.value || '',
+      extensionToken: auth.token,
+      credentialId: auth.user?.credentialId || null,
+      pairedUser: auth.user || null,
+    };
+
+    let delivered = false;
+    try {
+      const response = await chrome.tabs.sendMessage(targetTab.id, payload);
+      delivered = Boolean(response?.received);
+    } catch (err) {
+      // If content script was not yet active in that tab, inject it programmatically and retry
+      if (chrome.scripting && chrome.scripting.executeScript) {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: targetTab.id },
+            files: ['content.js'],
+          });
+          await new Promise((r) => setTimeout(r, 150));
+          const retryRes = await chrome.tabs.sendMessage(targetTab.id, payload);
+          delivered = Boolean(retryRes?.received);
+        } catch (scriptErr) {
+          console.warn('Programmatic script injection retry failed:', scriptErr);
+        }
+      }
+    }
+
+    // Focus target VeraTrace tab and its window
+    if (chrome.tabs.update && targetTab.id) {
+      await chrome.tabs.update(targetTab.id, { active: true });
+    }
+    if (chrome.windows && chrome.windows.update && targetTab.windowId) {
+      await chrome.windows.update(targetTab.windowId, { focused: true });
+    }
+
+    showNotification('Capture transmitted to VeraTrace web app! Switched to tab.', 'success', 3000);
+    setTimeout(() => {
+      window.close();
+    }, 600);
+  } catch (err) {
+    showNotification(`Could not relay to web app: ${err.message}`, 'error', 6000);
+    btn.disabled = false;
+    btn.textContent = 'Send to App →';
+  }
+});
+
+// 2. Save to Offline Vault (Local device only, no server upload claims)
+document.getElementById('btn-save-offline')?.addEventListener('click', async () => {
+  if (!currentCapture) return;
+
+  const platform = document.getElementById('evidence-platform')?.value || 'Other';
+  const senderHandle = document.getElementById('sender-handle')?.value || '';
+  const notes = document.getElementById('context-notes')?.value || '';
+  const caseId = document.getElementById('case-select')?.value || 'VT-OFFLINE-VAULT';
+
+  saveToLocalHistory({
+    evidenceId: currentCapture.evidenceId,
+    filename: `offline_capture_${Date.now()}.png`,
+    sha256: currentCapture.sha256,
+    url: currentCapture.url,
+    title: currentCapture.title,
+    caseId,
+    platform,
+    senderHandle,
+    notes,
+    dataUrl: currentCapture.dataUrl,
+    captureTimestamp: currentCapture.captureTimestamp,
+    storedAt: new Date().toISOString(),
+    status: 'STORED_OFFLINE',
+  });
+
+  showNotification(`Evidence saved to Offline Vault on this device (SHA-256: ${currentCapture.sha256.slice(0, 16)}...). Stored locally — NOT uploaded to server.`, 'info', 6000);
+
+  currentCapture = null;
+  document.getElementById('no-capture-placeholder').style.display = 'block';
+  document.getElementById('review-content').style.display = 'none';
+  document.querySelector('[data-tab="tab-history"]')?.click();
+});
+
+// Inline Notification System
 function showNotification(message, type = 'info', durationMs = 5000) {
   const el = document.getElementById('inline-notification');
   if (!el) return;
@@ -326,14 +547,14 @@ function showNotification(message, type = 'info', durationMs = 5000) {
   }, durationMs);
 }
 
-// 2. Upload to VeraTrace API with Scoped Token Authentication
+// 3. Upload to Server Vault (Requires pairing and genuine backend verification)
 document.getElementById('evidence-form')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (!currentCapture) return;
 
   const btnUpload = document.getElementById('btn-upload');
   btnUpload.disabled = true;
-  btnUpload.textContent = 'Sealing in Vault...';
+  btnUpload.textContent = 'Sealing in Server Vault...';
 
   const caseId = document.getElementById('case-select').value;
   const platform = document.getElementById('evidence-platform').value;
@@ -342,12 +563,14 @@ document.getElementById('evidence-form')?.addEventListener('submit', async (e) =
 
   const auth = await getStoredAuth();
   if (!auth.token) {
-    showNotification('Authentication Required: Pair this extension in the Pairing tab before uploading.', 'error', 6000);
+    showNotification('Authentication Required: Pair this extension in the Pairing tab before uploading to Server Vault.', 'error', 6000);
     btnUpload.disabled = false;
-    btnUpload.textContent = 'Upload to Vault';
+    btnUpload.textContent = 'Upload to Server Vault';
     document.getElementById('tab-pairing-btn')?.click();
     return;
   }
+
+  const apiBase = await getApiBase();
 
   const formData = new FormData();
   formData.append('evidenceId', currentCapture.evidenceId);
@@ -360,242 +583,182 @@ document.getElementById('evidence-form')?.addEventListener('submit', async (e) =
   formData.append('senderHandle', senderHandle);
   formData.append('notes', notes);
 
-  const headers = {
-    Authorization: `Bearer ${auth.token}`,
-  };
-
   try {
-    const res = await fetch(`${API_BASE}/cases/${caseId}/evidence`, {
+    const res = await fetch(`${apiBase}/cases/${caseId}/evidence`, {
       method: 'POST',
-      headers,
+      headers: {
+        Authorization: `Bearer ${auth.token}`,
+      },
       body: formData,
     });
 
     if (res.ok) {
       const data = await res.json();
+      const serverEvidenceId = data.evidence?.evidence_id || currentCapture.evidenceId;
+
       saveToLocalHistory({
-        evidenceId: data.evidence.evidence_id,
-        filename: data.evidence.original_filename,
+        evidenceId: serverEvidenceId,
+        filename: data.evidence?.original_filename || `capture_${Date.now()}.png`,
         sha256: currentCapture.sha256,
         url: currentCapture.url,
-        caseId,
-        uploadedAt: new Date().toISOString(),
-        status: 'SEALED_IN_VAULT',
-      });
-
-      showNotification(`Evidence sealed in Vault! Evidence ID: ${data.evidence.evidence_id} (SHA-256: ${currentCapture.sha256.slice(0, 16)}...)`, 'success', 6000);
-
-      currentCapture = null;
-      document.getElementById('no-capture-placeholder').style.display = 'block';
-      document.getElementById('review-content').style.display = 'none';
-      document.querySelector('[data-tab="tab-history"]').click();
-    } else if (res.status === 401 || res.status === 403) {
-      const errJson = await res.json().catch(() => ({}));
-      showNotification(`Upload Rejected (${res.status}): ${errJson.error || 'Extension token revoked or unauthorized.'}`, 'error', 8000);
-      // Preserve capture in local queue with stable client evidenceId so evidence is never lost
-      saveToLocalHistory({
-        evidenceId: currentCapture.evidenceId,
-        filename: `capture_${Date.now()}.png`,
-        sha256: currentCapture.sha256,
-        url: currentCapture.url,
+        title: currentCapture.title,
         caseId,
         platform,
         senderHandle,
         notes,
-        captureTimestamp: currentCapture.captureTimestamp,
         dataUrl: currentCapture.dataUrl,
         uploadedAt: new Date().toISOString(),
-        status: 'SAVED_LOCALLY_PENDING_SYNC',
+        status: 'SEALED_IN_SERVER_VAULT',
       });
+
+      showNotification(`Evidence sealed in Server Vault! ID: ${serverEvidenceId} (SHA-256: ${currentCapture.sha256.slice(0, 16)}...)`, 'success', 6000);
+
       currentCapture = null;
       document.getElementById('no-capture-placeholder').style.display = 'block';
       document.getElementById('review-content').style.display = 'none';
       document.querySelector('[data-tab="tab-history"]').click();
     } else {
-      throw new Error(`Server returned HTTP ${res.status}`);
+      const errJson = await res.json().catch(() => ({}));
+      const errMsg = errJson.error || `Upload failed with HTTP ${res.status}`;
+      showNotification(`Server Vault Upload Failed: ${errMsg}`, 'error', 8000);
+
+      // Preserve capture in Offline Vault so evidence is NEVER lost
+      saveToLocalHistory({
+        evidenceId: currentCapture.evidenceId,
+        filename: `capture_${Date.now()}.png`,
+        sha256: currentCapture.sha256,
+        url: currentCapture.url,
+        title: currentCapture.title,
+        caseId,
+        platform,
+        senderHandle,
+        notes,
+        dataUrl: currentCapture.dataUrl,
+        captureTimestamp: currentCapture.captureTimestamp,
+        storedAt: new Date().toISOString(),
+        status: 'STORED_OFFLINE',
+      });
+
+      currentCapture = null;
+      document.getElementById('no-capture-placeholder').style.display = 'block';
+      document.getElementById('review-content').style.display = 'none';
+      document.querySelector('[data-tab="tab-history"]').click();
     }
   } catch (err) {
-    // Offline resilience: save in local queue with stable client evidenceId
+    // Offline resilience: backend unavailable
     saveToLocalHistory({
       evidenceId: currentCapture.evidenceId,
       filename: `capture_${Date.now()}.png`,
       sha256: currentCapture.sha256,
       url: currentCapture.url,
+      title: currentCapture.title,
       caseId,
       platform,
       senderHandle,
       notes,
+      dataUrl: currentCapture.dataUrl,
       captureTimestamp: currentCapture.captureTimestamp,
-      dataUrl: currentCapture.dataUrl, // Preserved for retry transmission
-      uploadedAt: new Date().toISOString(),
-      status: 'SAVED_LOCALLY_PENDING_SYNC',
+      storedAt: new Date().toISOString(),
+      status: 'STORED_OFFLINE',
     });
 
-    showNotification(`VeraTrace local server unreachable. Capture queued safely in offline local storage!`, 'info', 6000);
+    showNotification(`Backend offline (${err.message}). Capture safely preserved in Offline Vault on this device!`, 'info', 7000);
     currentCapture = null;
     document.getElementById('no-capture-placeholder').style.display = 'block';
     document.getElementById('review-content').style.display = 'none';
     document.querySelector('[data-tab="tab-history"]').click();
   } finally {
     btnUpload.disabled = false;
-    btnUpload.textContent = 'Upload to Vault';
+    btnUpload.textContent = 'Upload to Server Vault';
   }
 });
 
-// Offline Queue Synchronizer & Retry Engine
-async function syncPendingCaptures() {
-  const syncBtn = document.getElementById('btn-sync-pending');
-  const statusEl = document.getElementById('sync-status');
-  if (syncBtn) syncBtn.disabled = true;
+// Vault & History Management (chrome.storage.local)
+let currentFilter = 'all';
+let selectedDetailItem = null;
 
-  if (statusEl) {
-    statusEl.style.display = 'block';
-    statusEl.textContent = 'Checking pending queue for retries...';
-  }
-
-  const auth = await getStoredAuth();
-  if (!auth.token) {
-    if (statusEl) statusEl.textContent = 'Extension unpaired: pairing token required before synchronizing queue.';
-    showNotification('Pair extension before synchronizing pending captures.', 'error');
-    if (syncBtn) syncBtn.disabled = false;
-    return;
-  }
-
-  const getItems = () =>
-    new Promise((resolve) => {
-      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-        chrome.storage.local.get(['veratrace_history'], (res) => resolve(res.veratrace_history || []));
-      } else {
-        resolve(JSON.parse(localStorage.getItem('veratrace_history') || '[]'));
-      }
-    });
-
-  const saveItems = (items) =>
-    new Promise((resolve) => {
-      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-        chrome.storage.local.set({ veratrace_history: items }, resolve);
-      } else {
-        localStorage.setItem('veratrace_history', JSON.stringify(items));
-        resolve();
-      }
-    });
-
-  const history = await getItems();
-  const pending = history.filter((item) => item.status === 'SAVED_LOCALLY_PENDING_SYNC' && item.dataUrl && !item.in_flight);
-
-  if (pending.length === 0) {
-    if (statusEl) statusEl.textContent = 'No offline captures pending synchronization.';
-    if (syncBtn) syncBtn.disabled = false;
-    setTimeout(() => { if (statusEl) statusEl.style.display = 'none'; }, 3000);
-    return;
-  }
-
-  let syncedCount = 0;
-  for (const item of pending) {
-    item.in_flight = true;
-    try {
-      const blob = dataUrlToBlob(item.dataUrl);
-      const formData = new FormData();
-      if (item.evidenceId) {
-        formData.append('evidenceId', item.evidenceId);
-      }
-      formData.append('file', blob, item.filename);
-      formData.append('submissionSource', 'EXTENSION_CAPTURE');
-      formData.append('submissionMethod', 'CHROME_EXT_MV3_OFFLINE_RETRY');
-      formData.append('captureTimestamp', item.captureTimestamp || item.uploadedAt);
-      formData.append('sourceUrl', item.url || '');
-      formData.append('platform', item.platform || 'Other');
-      formData.append('senderHandle', item.senderHandle || '');
-      formData.append('notes', item.notes || 'Synced from offline queue');
-
-      const headers = {
-        Authorization: `Bearer ${auth.token}`,
-      };
-
-      const res = await fetch(`${API_BASE}/cases/${item.caseId || 'VT-DEMO-2026'}/evidence`, {
-        method: 'POST',
-        headers,
-        body: formData,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        item.status = 'SEALED_IN_VAULT';
-        item.evidenceId = data.evidence?.evidence_id || item.evidenceId;
-        delete item.dataUrl; // Free storage memory once safely ingested and verified by server ACK
-        item.syncedAt = new Date().toISOString();
-        syncedCount++;
-      } else if (res.status === 401 || res.status === 403) {
-        item.in_flight = false;
-        showNotification(`Sync paused: Extension token revoked or expired. Please re-pair extension.`, 'error');
-        break;
-      }
-    } catch (err) {
-      // Server still offline; keep in queue for next retry
-    } finally {
-      delete item.in_flight;
-    }
-  }
-
-  await saveItems(history);
-  renderHistory();
-
-  if (statusEl) {
-    if (syncedCount > 0) {
-      statusEl.textContent = `Successfully synchronized ${syncedCount} offline capture(s) to vault!`;
-      showNotification(`Synchronized ${syncedCount} offline capture(s) to VeraTrace!`, 'success');
-    } else {
-      statusEl.textContent = `VeraTrace server still offline. Captures remain securely stored locally.`;
-    }
-  }
-
-  if (syncBtn) syncBtn.disabled = false;
-  setTimeout(() => { if (statusEl) statusEl.style.display = 'none'; }, 4000);
-}
-
-document.getElementById('btn-sync-pending')?.addEventListener('click', syncPendingCaptures);
-
-// History Management (chrome.storage.local)
 function saveToLocalHistory(entry) {
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
     chrome.storage.local.get(['veratrace_history'], (res) => {
       const history = res.veratrace_history || [];
-      history.unshift(entry);
-      chrome.storage.local.set({ veratrace_history: history.slice(0, 50) }, renderHistory);
+      // Replace existing entry by evidenceId if present, else prepend
+      const existingIdx = history.findIndex((h) => h.evidenceId === entry.evidenceId);
+      if (existingIdx >= 0) {
+        history[existingIdx] = entry;
+      } else {
+        history.unshift(entry);
+      }
+      chrome.storage.local.set({ veratrace_history: history.slice(0, 60) }, renderHistory);
     });
   } else {
-    // LocalStorage fallback for preview
     const hist = JSON.parse(localStorage.getItem('veratrace_history') || '[]');
-    hist.unshift(entry);
-    localStorage.setItem('veratrace_history', JSON.stringify(hist.slice(0, 50)));
+    const existingIdx = hist.findIndex((h) => h.evidenceId === entry.evidenceId);
+    if (existingIdx >= 0) {
+      hist[existingIdx] = entry;
+    } else {
+      hist.unshift(entry);
+    }
+    localStorage.setItem('veratrace_history', JSON.stringify(hist.slice(0, 60)));
     renderHistory();
   }
 }
+
+// History Filter Buttons
+document.querySelectorAll('.btn-filter').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.btn-filter').forEach((b) => {
+      b.style.background = '#FFFFFF';
+      b.style.color = '#4B5563';
+      b.style.borderColor = '#D1D5DB';
+    });
+    btn.style.background = '#FAF5FF';
+    btn.style.color = '#5B21B6';
+    btn.style.borderColor = '#E5D9F2';
+    currentFilter = btn.dataset.filter;
+    renderHistory();
+  });
+});
 
 function renderHistory() {
   const container = document.getElementById('history-list');
   if (!container) return;
 
   const displayList = (items) => {
-    if (!items || items.length === 0) {
-      container.innerHTML = '<p class="text-muted text-xs">No captures in local history.</p>';
+    let filtered = items;
+    if (currentFilter === 'server') {
+      filtered = items.filter((i) => i.status === 'SEALED_IN_SERVER_VAULT' || i.status === 'SEALED_IN_VAULT');
+    } else if (currentFilter === 'offline') {
+      filtered = items.filter((i) => i.status === 'STORED_OFFLINE' || i.status === 'SAVED_LOCALLY_PENDING_SYNC');
+    }
+
+    if (!filtered || filtered.length === 0) {
+      container.innerHTML = `<p class="text-muted text-xs">No captures in this view (${currentFilter}).</p>`;
       return;
     }
+
     container.innerHTML = '';
-    items.forEach((item) => {
+    filtered.forEach((item) => {
       const el = document.createElement('div');
       el.className = 'history-item';
-      const isPending = item.status === 'SAVED_LOCALLY_PENDING_SYNC';
+      el.style.cursor = 'pointer';
+
+      const isServer = item.status === 'SEALED_IN_SERVER_VAULT' || item.status === 'SEALED_IN_VAULT';
+      const badgeText = isServer ? 'Server Vault (Sealed)' : 'Offline Vault (Local)';
+      const badgeColor = isServer ? '#059669' : '#D97706';
+      const timestamp = item.uploadedAt || item.storedAt || item.captureTimestamp;
+
       el.innerHTML = `
-        <span class="title">${item.filename}</span>
-        <span class="text-xs text-muted mono">${item.sha256.slice(0, 24)}...</span>
-        <div class="meta">
-          <span style="color: ${isPending ? '#D97706' : '#059669'}; font-weight: 500;">
-            ${isPending ? 'Queued (Offline)' : 'Sealed in Vault'}
-          </span>
-          <span>${new Date(item.uploadedAt).toLocaleTimeString()}</span>
+        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+          <span class="title" style="font-weight: 600;">${item.filename || 'Evidence Capture'}</span>
+          <span style="font-size: 10px; font-weight: 600; color: ${badgeColor};">${badgeText}</span>
+        </div>
+        <div class="meta" style="margin-top: 4px;">
+          <span class="text-xs text-muted mono">${item.sha256 ? item.sha256.slice(0, 20) + '...' : '—'}</span>
+          <span>${timestamp ? new Date(timestamp).toLocaleTimeString() : ''}</span>
         </div>
       `;
+
+      el.addEventListener('click', () => openVaultItemDetail(item));
       container.appendChild(el);
     });
   };
@@ -609,6 +772,184 @@ function renderHistory() {
   }
 }
 
+// Open Detail View for an Evidence Item
+function openVaultItemDetail(item) {
+  selectedDetailItem = item;
+  const detailEl = document.getElementById('vault-item-detail');
+  if (!detailEl) return;
+
+  detailEl.style.display = 'block';
+  document.getElementById('detail-title').textContent = item.filename || 'Evidence Detail';
+
+  const isServer = item.status === 'SEALED_IN_SERVER_VAULT' || item.status === 'SEALED_IN_VAULT';
+  const statusEl = document.getElementById('detail-status');
+  statusEl.textContent = isServer ? 'Sealed in Server Vault' : 'Stored in Offline Vault (Local Only)';
+  statusEl.style.color = isServer ? '#059669' : '#D97706';
+
+  document.getElementById('detail-sha256').textContent = item.sha256 || '—';
+  document.getElementById('detail-time').textContent = new Date(item.captureTimestamp || item.uploadedAt || item.storedAt).toLocaleString();
+  document.getElementById('detail-platform').textContent = item.platform || 'Other Web Platform';
+  document.getElementById('detail-url').textContent = item.url || '—';
+
+  const imgEl = document.getElementById('detail-img');
+  if (item.dataUrl) {
+    imgEl.src = item.dataUrl;
+    imgEl.style.display = 'inline-block';
+  } else {
+    imgEl.style.display = 'none';
+  }
+
+  const uploadBtn = document.getElementById('btn-detail-upload-server');
+  if (!isServer && item.dataUrl) {
+    uploadBtn.style.display = 'block';
+  } else {
+    uploadBtn.style.display = 'none';
+  }
+
+  const verifyResult = document.getElementById('detail-verify-result');
+  verifyResult.style.display = 'none';
+}
+
+document.getElementById('btn-close-detail')?.addEventListener('click', () => {
+  const detailEl = document.getElementById('vault-item-detail');
+  if (detailEl) detailEl.style.display = 'none';
+  selectedDetailItem = null;
+});
+
+// Verify SHA-256 Integrity
+document.getElementById('btn-verify-integrity')?.addEventListener('click', async () => {
+  if (!selectedDetailItem) return;
+  const verifyResult = document.getElementById('detail-verify-result');
+  if (!verifyResult) return;
+
+  verifyResult.style.display = 'block';
+  verifyResult.textContent = 'Calculating cryptographic SHA-256...';
+  verifyResult.style.background = '#F3F4F6';
+  verifyResult.style.color = '#374151';
+
+  try {
+    if (!selectedDetailItem.dataUrl) {
+      verifyResult.textContent = 'Original binary not stored locally for offline re-hashing (Sealed on server).';
+      verifyResult.style.background = '#FEF3C7';
+      verifyResult.style.color = '#92400E';
+      return;
+    }
+
+    const blob = dataUrlToBlob(selectedDetailItem.dataUrl);
+    const arrayBuffer = await blob.arrayBuffer();
+    const computedHash = await computeSha256(arrayBuffer);
+
+    if (computedHash.toLowerCase() === selectedDetailItem.sha256.toLowerCase()) {
+      verifyResult.textContent = `✓ Integrity Verified: Recomputed SHA-256 matches stored forensic fingerprint bit-for-bit.`;
+      verifyResult.style.background = '#ECFDF5';
+      verifyResult.style.color = '#065F46';
+    } else {
+      verifyResult.textContent = `⚠ Hash Mismatch! Stored: ${selectedDetailItem.sha256.slice(0, 16)}..., Recomputed: ${computedHash.slice(0, 16)}...`;
+      verifyResult.style.background = '#FEF2F2';
+      verifyResult.style.color = '#991B1B';
+    }
+  } catch (err) {
+    verifyResult.textContent = `Verification error: ${err.message}`;
+    verifyResult.style.background = '#FEF2F2';
+    verifyResult.style.color = '#991B1B';
+  }
+});
+
+// Export Evidence & Forensic Metadata Package
+document.getElementById('btn-export-evidence')?.addEventListener('click', () => {
+  if (!selectedDetailItem) return;
+
+  // 1. Export JSON metadata
+  const metadata = {
+    veratraceExportVersion: '2.0.0',
+    evidenceId: selectedDetailItem.evidenceId,
+    filename: selectedDetailItem.filename,
+    sha256: selectedDetailItem.sha256,
+    status: selectedDetailItem.status,
+    caseId: selectedDetailItem.caseId,
+    sourceUrl: selectedDetailItem.url,
+    title: selectedDetailItem.title,
+    platform: selectedDetailItem.platform,
+    senderHandle: selectedDetailItem.senderHandle,
+    notes: selectedDetailItem.notes,
+    captureTimestamp: selectedDetailItem.captureTimestamp,
+    exportedAt: new Date().toISOString(),
+  };
+
+  const jsonBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
+  const jsonUrl = URL.createObjectURL(jsonBlob);
+  const aJson = document.createElement('a');
+  aJson.href = jsonUrl;
+  aJson.download = `veratrace_metadata_${selectedDetailItem.evidenceId}.json`;
+  aJson.click();
+  URL.revokeObjectURL(jsonUrl);
+
+  // 2. Export Image Binary if available
+  if (selectedDetailItem.dataUrl) {
+    const aImg = document.createElement('a');
+    aImg.href = selectedDetailItem.dataUrl;
+    aImg.download = selectedDetailItem.filename || `evidence_${selectedDetailItem.evidenceId}.png`;
+    aImg.click();
+  }
+
+  showNotification('Forensic export package generated and downloaded.', 'success');
+});
+
+// Upload offline item to server once paired
+document.getElementById('btn-detail-upload-server')?.addEventListener('click', async () => {
+  if (!selectedDetailItem || !selectedDetailItem.dataUrl) return;
+
+  const auth = await getStoredAuth();
+  if (!auth.token) {
+    showNotification('Authentication Required: Pair extension in Pairing tab before uploading.', 'error');
+    document.getElementById('tab-pairing-btn')?.click();
+    return;
+  }
+
+  const btn = document.getElementById('btn-detail-upload-server');
+  btn.disabled = true;
+  btn.textContent = 'Uploading...';
+
+  try {
+    const apiBase = await getApiBase();
+    const blob = dataUrlToBlob(selectedDetailItem.dataUrl);
+    const formData = new FormData();
+    formData.append('evidenceId', selectedDetailItem.evidenceId);
+    formData.append('file', blob, selectedDetailItem.filename);
+    formData.append('submissionSource', 'EXTENSION_CAPTURE');
+    formData.append('submissionMethod', 'CHROME_EXT_MV3_OFFLINE_UPLOAD');
+    formData.append('captureTimestamp', selectedDetailItem.captureTimestamp || selectedDetailItem.storedAt);
+    formData.append('sourceUrl', selectedDetailItem.url || '');
+    formData.append('platform', selectedDetailItem.platform || 'Other');
+    formData.append('senderHandle', selectedDetailItem.senderHandle || '');
+    formData.append('notes', selectedDetailItem.notes || '');
+
+    const res = await fetch(`${apiBase}/cases/${selectedDetailItem.caseId || 'VT-DEMO-2026'}/evidence`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${auth.token}` },
+      body: formData,
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      selectedDetailItem.status = 'SEALED_IN_SERVER_VAULT';
+      selectedDetailItem.evidenceId = data.evidence?.evidence_id || selectedDetailItem.evidenceId;
+      selectedDetailItem.uploadedAt = new Date().toISOString();
+      saveToLocalHistory(selectedDetailItem);
+      openVaultItemDetail(selectedDetailItem);
+      showNotification('Evidence successfully uploaded and sealed in Server Vault!', 'success');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showNotification(`Upload failed: ${err.error || res.statusText}`, 'error');
+    }
+  } catch (err) {
+    showNotification(`Backend error: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Upload to Server';
+  }
+});
+
 document.getElementById('btn-clear-history')?.addEventListener('click', () => {
   const btn = document.getElementById('btn-clear-history');
   if (btn.dataset.confirming === 'true') {
@@ -621,6 +962,8 @@ document.getElementById('btn-clear-history')?.addEventListener('click', () => {
     btn.dataset.confirming = 'false';
     btn.textContent = 'Clear';
     showNotification('Local capture queue cleared.', 'info');
+    const detailEl = document.getElementById('vault-item-detail');
+    if (detailEl) detailEl.style.display = 'none';
   } else {
     btn.dataset.confirming = 'true';
     btn.textContent = 'Confirm?';
@@ -631,5 +974,11 @@ document.getElementById('btn-clear-history')?.addEventListener('click', () => {
   }
 });
 
-// Kick off
-initActiveTab();
+// Kick off initialization
+async function init() {
+  await initActiveTab();
+  const apiBase = await getApiBase();
+  const urlInput = document.getElementById('api-url-input');
+  if (urlInput) urlInput.value = apiBase;
+}
+init();

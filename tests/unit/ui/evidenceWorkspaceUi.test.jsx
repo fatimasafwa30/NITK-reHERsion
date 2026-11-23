@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import EvidenceWorkspace from '../../../src/pages/EvidenceWorkspace.jsx';
 import CaseOverview from '../../../src/pages/CaseOverview.jsx';
 import Dossier from '../../../src/pages/Dossier.jsx';
+import { ChainOfCustody } from '../../../src/pages/ChainOfCustody.jsx';
 import { syncEvidenceRecord, clearEvidenceForCase, VerificationStatus } from '../../../src/services/evidenceService.js';
 import { addTimelineEventForCase, clearTimelineForCase } from '../../../src/services/timelineService.js';
 
@@ -102,5 +103,38 @@ describe('Evidence & Timeline UI Integration', () => {
     expect(html).toContain('Bharatiya Sakshya Adhiniyam, 2023');
     expect(html).toContain('cybercrime.gov.in');
     expect(html).toContain('1930');
+  });
+
+  it('renders ChainOfCustody with human-readable event titles, formatted metadata cards, actor entities, and separated digest areas without raw JSON', () => {
+    const html = ReactDOMServer.renderToString(
+      <MemoryRouter initialEntries={[`/case/${caseId}/chain-of-custody`]}>
+        <Routes>
+          <Route path="/case/:caseId/chain-of-custody" element={<ChainOfCustody />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    // 1. Prominent title and headers
+    expect(html).toContain('Tamper-Evident');
+    expect(html).toContain('Chain of Custody');
+    expect(html).toContain('Case Established in Vault');
+    expect(html).toContain('#01');
+
+    // 2. Actor / Entity labelling
+    expect(html).toContain('Actor / Entity:');
+    expect(html).toContain('Authorized Intake Lead');
+
+    // 3. Formatted metadata (not raw JSON pre block)
+    expect(html).toContain('Event Forensic Metadata');
+    expect(html).toContain('Case Title');
+    expect(html).not.toContain('<pre class="mono text-[10px] bg-wash/60');
+
+    // 4. Cryptographic Block Ledger with separated Previous & Current digests
+    expect(html).toContain('Cryptographic Block Ledger');
+    expect(html).toContain('Previous Event Digest');
+    expect(html).toContain('Current Block Hash');
+    expect(html).toContain('Genesis Root');
+    expect(html).toContain('Export Audit JSON');
+    expect(html).toContain('Verify Chain Integrity');
   });
 });

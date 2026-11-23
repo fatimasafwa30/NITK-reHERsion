@@ -251,6 +251,18 @@ function initSchema(db) {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_reset_token_hash ON password_reset_tokens(token_hash);
+
+    -- Short-lived, Single-Use Extension Pairing Tokens
+    CREATE TABLE IF NOT EXISTS extension_pairing_tokens (
+      pairing_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL,
+      device_name TEXT,
+      expires_at TEXT NOT NULL,
+      used INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_pairing_token_hash ON extension_pairing_tokens(token_hash);
   `);
 
   // Ensure owner_id column exists in pre-existing cases table

@@ -24,7 +24,7 @@
     <div class="tabs">
       <button class="tab-btn active" data-tab="tab-capture">Capture</button>
       <button class="tab-btn" data-tab="tab-review" id="tab-review-btn">Review</button>
-      <button class="tab-btn" data-tab="tab-history">History</button>
+      <button class="tab-btn" data-tab="tab-history" id="tab-history-btn">Vault & History</button>
       <button class="tab-btn" data-tab="tab-pairing" id="tab-pairing-btn">Pairing</button>
       <button class="tab-btn" data-tab="tab-info">Safety</button>
     </div>
@@ -111,28 +111,66 @@
               <textarea id="context-notes" class="input textarea" rows="2" placeholder="Explain what occurred (e.g., Unsolicited harassment received after block)"></textarea>
             </div>
 
-            <div class="btn-group">
-              <button type="button" id="btn-discard" class="btn btn-secondary">Discard</button>
-              <button type="submit" id="btn-upload" class="btn btn-primary">
-                Upload to Vault
-              </button>
+            <div class="btn-group" style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="display: flex; gap: 6px;">
+                <button type="button" id="btn-discard" class="btn btn-secondary" style="flex: 1;">Discard</button>
+                <button type="button" id="btn-send-to-webapp" class="btn btn-secondary" style="flex: 1.4;" title="Relay captured evidence to open VeraTrace case in web browser">
+                  Send to App &rarr;
+                </button>
+              </div>
+              <div style="display: flex; gap: 6px;">
+                <button type="button" id="btn-save-offline" class="btn btn-secondary" style="flex: 1; border-color: #D97706; color: #92400E;" title="Store evidence locally in offline vault without uploading to server">
+                  Offline Vault
+                </button>
+                <button type="submit" id="btn-upload" class="btn btn-primary" style="flex: 1.4;" title="Upload original bytes to encrypted server vault (Requires Pairing)">
+                  Upload to Server Vault
+                </button>
+              </div>
             </div>
           </form>
         </div>
       </section>
 
-      <!-- 3. HISTORY TAB -->
+      <!-- 3. VAULT & HISTORY TAB -->
       <section id="tab-history" class="tab-pane">
         <div class="history-header">
-          <span class="section-title">Evidence Queue</span>
+          <span class="section-title">Evidence Vault & Queue</span>
           <div class="history-actions">
-            <button id="btn-sync-pending" class="btn btn-secondary btn-xs">Sync Pending</button>
             <button id="btn-clear-history" class="btn-text">Clear</button>
           </div>
+        </div>
+        <div style="display: flex; gap: 4px; margin-bottom: 8px;">
+          <button type="button" class="btn-filter active" data-filter="all" id="filter-all" style="flex: 1; font-size: 10px; padding: 3px 6px; border-radius: 4px; border: 1px solid #E5D9F2; background: #FAF5FF; color: #5B21B6; cursor: pointer;">All</button>
+          <button type="button" class="btn-filter" data-filter="server" id="filter-server" style="flex: 1; font-size: 10px; padding: 3px 6px; border-radius: 4px; border: 1px solid #D1D5DB; background: #FFFFFF; color: #4B5563; cursor: pointer;">Server Vault</button>
+          <button type="button" class="btn-filter" data-filter="offline" id="filter-offline" style="flex: 1; font-size: 10px; padding: 3px 6px; border-radius: 4px; border: 1px solid #D1D5DB; background: #FFFFFF; color: #4B5563; cursor: pointer;">Offline Vault</button>
         </div>
         <div id="sync-status" class="sync-status-msg" style="display: none;"></div>
         <div id="history-list" class="history-list">
           <p class="text-muted text-xs">No captures in local history.</p>
+        </div>
+
+        <!-- Detail Inspection Modal / Drawer -->
+        <div id="vault-item-detail" style="display: none; background: #FFFFFF; border: 1px solid #E5D9F2; border-radius: 8px; padding: 10px; margin-top: 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <span class="font-bold text-xs text-plum" id="detail-title">Evidence Detail</span>
+            <button type="button" id="btn-close-detail" class="btn-text text-xs">&times; Close</button>
+          </div>
+          <div id="detail-preview-container" style="max-height: 120px; overflow: hidden; border-radius: 4px; margin-bottom: 6px; text-align: center; background: #F3F4F6;">
+            <img id="detail-img" src="" alt="Preview" style="max-height: 120px; width: auto; object-fit: contain;" />
+          </div>
+          <div class="field-stack text-xs" style="gap: 4px;">
+            <div class="info-row"><span class="label">Status:</span><span class="value font-semibold" id="detail-status">—</span></div>
+            <div class="info-row"><span class="label">SHA-256:</span><span class="value mono text-[10px]" id="detail-sha256" style="word-break: break-all;">—</span></div>
+            <div class="info-row"><span class="label">Captured:</span><span class="value" id="detail-time">—</span></div>
+            <div class="info-row"><span class="label">Platform:</span><span class="value" id="detail-platform">—</span></div>
+            <div class="info-row"><span class="label">Source URL:</span><span class="value mono text-[10px]" id="detail-url" style="word-break: break-all;">—</span></div>
+          </div>
+          <div style="display: flex; gap: 6px; margin-top: 8px;">
+            <button type="button" id="btn-verify-integrity" class="btn btn-secondary btn-xs" style="flex: 1;">Verify SHA-256</button>
+            <button type="button" id="btn-export-evidence" class="btn btn-secondary btn-xs" style="flex: 1;">Export Package</button>
+            <button type="button" id="btn-detail-upload-server" class="btn btn-primary btn-xs" style="flex: 1; display: none;">Upload to Server</button>
+          </div>
+          <div id="detail-verify-result" style="display: none; margin-top: 6px; font-size: 10px; padding: 4px 6px; border-radius: 4px;"></div>
         </div>
       </section>
 
@@ -141,7 +179,7 @@
         <div class="hero-box">
           <p class="section-title">Cryptographic Extension Pairing</p>
           <p class="section-desc">
-            Pair this Chrome extension with your VeraTrace account using a scoped, revocable credential token. Never exposes account passwords or master encryption keys.
+            Pair this Chrome extension with your VeraTrace account using a scoped, short-lived pairing token. Never exposes passwords or master encryption keys.
           </p>
         </div>
 
@@ -149,7 +187,8 @@
           <div id="unpaired-view">
             <div class="field">
               <label for="pairing-token-input">Extension Pairing Token</label>
-              <textarea id="pairing-token-input" class="input textarea" rows="3" placeholder="Paste scoped token from VeraTrace dashboard..."></textarea>
+              <textarea id="pairing-token-input" class="input textarea" rows="2" placeholder="Paste single-use token (vtp_...) from VeraTrace Capture page..."></textarea>
+              <span class="text-[10px] text-muted">Generate in VeraTrace web app under <strong>Capture &rarr; Connect Chrome Extension</strong>.</span>
             </div>
             <button id="btn-save-pairing" class="btn btn-primary btn-sm" style="width: 100%; margin-top: 6px;">
               Connect & Pair Extension
@@ -173,6 +212,14 @@
               <button id="btn-unpair" class="btn btn-secondary btn-sm" style="width: 100%;">
                 Disconnect / Revoke Local Session
               </button>
+            </div>
+          </div>
+
+          <div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed #E5D9F2;">
+            <label for="api-url-input" class="text-[10px] text-muted" style="display: block; margin-bottom: 2px;">Backend API Endpoint:</label>
+            <div style="display: flex; gap: 4px;">
+              <input type="text" id="api-url-input" class="input" style="font-size: 10px; height: 26px; padding: 2px 6px;" value="http://localhost:4000/api" />
+              <button type="button" id="btn-save-api-url" class="btn btn-secondary btn-xs" style="white-space: nowrap;">Save</button>
             </div>
           </div>
         </div>
