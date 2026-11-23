@@ -26,7 +26,7 @@ import {
   ProcessingEventOutcome,
   SOFTWARE_COMPONENTS,
 } from '../lib/forensics/provenanceRecorder.js';
-import { syncEvidenceToTimeline } from './timelineService.js';
+import { syncEvidenceToTimeline, addTimelineEventForCase } from './timelineService.js';
 import {
   saveVaultBlob,
   getVaultBlob,
@@ -80,6 +80,24 @@ export interface EvidenceRecord {
   userClaimedSource?: string;
   /** Package relative path for dossier exports */
   packageRelativePath?: string;
+  /** Incident platform channel */
+  platform?: string;
+  /** Sender handle or identifier */
+  senderHandle?: string;
+  /** Contextual incident notes */
+  notes?: string;
+  /** Source URL */
+  sourceUrl?: string;
+  /** Incident capture timestamp */
+  captureTimestamp?: string;
+  /** Cryptographic upload timestamp */
+  uploadTimestamp?: string;
+  /** Media preview URL (blob or data URI) */
+  previewUrl?: string;
+  /** Submission source */
+  submissionSource?: string;
+  /** Submission method */
+  submissionMethod?: string;
 }
 
 // Case-scoped in-memory evidence records map: caseId -> (evidenceId -> EvidenceRecord)
@@ -429,6 +447,20 @@ export async function computeSha256(data: ArrayBuffer | Uint8Array): Promise<str
   throw new Error('Web Cryptography API (crypto.subtle) is not available in this environment.');
 }
 
+export interface ProcessEvidenceOptions {
+  userClaimedSource?: string;
+  platform?: string;
+  senderHandle?: string;
+  notes?: string;
+  sourceUrl?: string;
+  captureTimestamp?: string;
+  uploadTimestamp?: string;
+  previewUrl?: string;
+  submissionSource?: string;
+  submissionMethod?: string;
+  evidenceId?: string;
+}
+
 /**
  * High-level evidence processing pipeline for browser/client environments.
  *
@@ -443,7 +475,7 @@ export async function computeSha256(data: ArrayBuffer | Uint8Array): Promise<str
 export async function processEvidenceFile(
   caseId: string,
   file: File | Blob | { name: string; size: number; slice(start?: number, end?: number): any; arrayBuffer(): Promise<ArrayBuffer> },
-  userClaimedSource?: string
+  userClaimedSourceOrOpts?: string | ProcessEvidenceOptions
 ): Promise<EvidenceRecord> {
   if (!caseId || typeof caseId !== 'string' || !caseId.trim()) {
     throw new ForensicsError('Valid caseId is required for evidence processing.', 'ERR_INVALID_CASE');
@@ -453,6 +485,11 @@ export async function processEvidenceFile(
   if (!file) {
     throw new ForensicsError('File object is required for evidence processing.', 'ERR_MISSING_FILE');
   }
+
+  const opts: ProcessEvidenceOptions =
+    typeof userClaimedSourceOrOpts === 'object' && userClaimedSourceOrOpts !== null
+      ? userClaimedSourceOrOpts
+      : { userClaimedSource: typeof userClaimedSourceOrOpts === 'string' ? userClaimedSourceOrOpts : undefined };
 
   // Quota enforcement (50 MiB)
   if (file.size > MAX_UPLOAD_BYTES) {
@@ -467,7 +504,7 @@ export async function processEvidenceFile(
   const originalFilename =
     'name' in file && typeof file.name === 'string' ? file.name : 'unnamed_evidence';
   const sanitizedFilename = sanitizeFilename(originalFilename);
-  const evidenceId = `ev_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+  const evidenceId = opts.evidenceId || `ev_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
   // 1. Provenance: FILE_INTAKE_RECEIVED
   syncProvenanceEvent(normCaseId, {
@@ -482,7 +519,7 @@ export async function processEvidenceFile(
       originalFilename,
       sanitizedFilename,
       sizeBytes: file.size,
-      userClaimedSource: userClaimedSource || null,
+      userClaimedSource: opts.userClaimedSource || null,
     }),
   });
 
@@ -564,7 +601,7 @@ export async function processEvidenceFile(
   });
 
   // 6. Record assembly & registration
-  const recordedAt = new Date().toISOString();
+  const recordedAt = opts.uploadTimestamp || new Date().toISOString();
   const storageKey = `cases/${normCaseId}/raw/${evidenceId}`;
 
   const record: EvidenceRecord = {
@@ -580,7 +617,16 @@ export async function processEvidenceFile(
     storageKey,
     intakeStatus: 'PROMOTED',
     extractedMetadata,
-    userClaimedSource: userClaimedSource || undefined,
+    userClaimedSource: opts.userClaimedSource || opts.sourceUrl || undefined,
+    platform: opts.platform,
+    senderHandle: opts.senderHandle,
+    notes: opts.notes,
+    sourceUrl: opts.sourceUrl,
+    captureTimestamp: opts.captureTimestamp,
+    uploadTimestamp: recordedAt,
+    previewUrl: opts.previewUrl,
+    submissionSource: opts.submissionSource,
+    submissionMethod: opts.submissionMethod,
   };
 
   syncProvenanceEvent(normCaseId, {
@@ -625,6 +671,24 @@ export async function processEvidenceFile(
         }
       : undefined,
   });
+
+  // Link incident metadata to timeline events if provided
+  if (opts.platform || opts.senderHandle || opts.notes || opts.captureTimestamp) {
+    try {
+      addTimelineEventForCase(normCaseId, {
+        caseId: normCaseId,
+        occurredAt: opts.captureTimestamp || recordedAt,
+        timeConfidence: opts.captureTimestamp ? 'confirmed' : 'uncertain',
+        label: `Evidence Sealed: ${sanitizedFilename}${opts.platform ? ` (${opts.platform})` : ''}`,
+        relatedEvidenceId: evidenceId,
+        platform: opts.platform,
+        senderHandle: opts.senderHandle,
+        blockedPrior: false,
+      });
+    } catch {
+      // Timeline event registration is non-fatal
+    }
+  }
 
   return record;
 }

@@ -72,6 +72,9 @@ function initSchema(db) {
       file_size INTEGER NOT NULL,
       sha256_hash TEXT NOT NULL,
       source_url TEXT,
+      platform TEXT,
+      sender_handle TEXT,
+      notes TEXT,
       submission_source TEXT NOT NULL DEFAULT 'USER_SUBMITTED', -- USER_SUBMITTED, EXTENSION_CAPTURE, API
       submission_method TEXT NOT NULL DEFAULT 'MANUAL_DROPZONE',
       capture_timestamp TEXT,
@@ -268,6 +271,22 @@ function initSchema(db) {
     }
     if (pragmaUsers && !pragmaUsers.some((c) => c.name === 'session_epoch')) {
       db.exec(`ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 1;`);
+    }
+  } catch (err) {
+    // Column might already exist
+  }
+
+  // Ensure platform, sender_handle, and notes columns exist in evidence_records table
+  try {
+    const pragmaEvidence = db.prepare(`PRAGMA table_info(evidence_records)`).all();
+    if (pragmaEvidence && !pragmaEvidence.some((c) => c.name === 'platform')) {
+      db.exec(`ALTER TABLE evidence_records ADD COLUMN platform TEXT;`);
+    }
+    if (pragmaEvidence && !pragmaEvidence.some((c) => c.name === 'sender_handle')) {
+      db.exec(`ALTER TABLE evidence_records ADD COLUMN sender_handle TEXT;`);
+    }
+    if (pragmaEvidence && !pragmaEvidence.some((c) => c.name === 'notes')) {
+      db.exec(`ALTER TABLE evidence_records ADD COLUMN notes TEXT;`);
     }
   } catch (err) {
     // Column might already exist

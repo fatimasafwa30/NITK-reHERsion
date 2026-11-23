@@ -19,6 +19,26 @@
   "background": {
     "service_worker": "background.js"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost:*/*",
+        "http://127.0.0.1:*/*",
+        "https://*.vercel.app/*",
+        "https://veratrace-app.vercel.app/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:*/*",
+      "http://127.0.0.1:*/*",
+      "https://*.vercel.app/*",
+      "https://veratrace-app.vercel.app/*"
+    ]
+  },
   "icons": {
     "48": "icon.svg",
     "128": "icon.svg"

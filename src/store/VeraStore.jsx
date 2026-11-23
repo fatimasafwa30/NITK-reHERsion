@@ -95,12 +95,15 @@ export function VeraStoreProvider({ children }) {
 
   const addEvidence = useCallback(
     async (caseId, record, file) => {
+      let created = null;
       if (file) {
-        await processEvidenceFile(caseId, file);
+        created = await processEvidenceFile(caseId, file, record);
       } else {
         syncEvidenceRecord(caseId, record);
+        created = record;
       }
       setState(loadFromServices());
+      return created;
     },
     [],
   );

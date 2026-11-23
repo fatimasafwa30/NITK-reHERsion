@@ -656,6 +656,9 @@ export function createServer() {
         const submissionMethod = req.body.submissionMethod || 'BROWSER_INTAKE';
         const captureTimestamp = req.body.captureTimestamp || null;
         const sourceUrl = req.body.sourceUrl ? String(req.body.sourceUrl).slice(0, 500) : null;
+        const platform = req.body.platform ? String(req.body.platform).slice(0, 100) : null;
+        const senderHandle = req.body.senderHandle ? String(req.body.senderHandle).slice(0, 150) : null;
+        const notes = req.body.notes ? String(req.body.notes).slice(0, 2000) : null;
         const now = new Date().toISOString();
 
         // Server-Side Idempotency Protection:
@@ -687,12 +690,14 @@ export function createServer() {
         db.prepare(`
           INSERT INTO evidence_records (
             evidence_id, case_id, original_filename, file_type, file_size,
-            sha256_hash, source_url, submission_source, submission_method,
+            sha256_hash, source_url, platform, sender_handle, notes,
+            submission_source, submission_method,
             capture_timestamp, upload_timestamp, classification, preservation_locked,
             active_version, integrity_status, created_at, updated_at
           ) VALUES (
             ?, ?, ?, ?, ?,
-            ?, ?, ?, ?,
+            ?, ?, ?, ?, ?,
+            ?, ?,
             ?, ?, ?, ?,
             1, 'VERIFIED', ?, ?
           )
@@ -704,6 +709,9 @@ export function createServer() {
           fileSize,
           sha256,
           sourceUrl,
+          platform,
+          senderHandle,
+          notes,
           submissionSource,
           submissionMethod,
           captureTimestamp,
@@ -748,11 +756,37 @@ export function createServer() {
             sha256Hash: sha256,
             fileSize,
             submissionSource,
+            submissionMethod,
             captureTimestamp,
             sourceUrl,
+            platform,
+            senderHandle,
+            notes,
             vaultPath: fileVersion.storagePath,
           },
         });
+
+        // 5. Link to Case Timeline
+        try {
+          const timelineEventId = `evt_${crypto.randomUUID()}`;
+          db.prepare(`
+            INSERT INTO timeline_events (
+              event_id, case_id, occurred_at, time_confidence, label,
+              related_evidence_id, platform, sender_handle, blocked_prior, created_at
+            ) VALUES (?, ?, ?, 'confirmed', ?, ?, ?, ?, 0, ?)
+          `).run(
+            timelineEventId,
+            caseId,
+            captureTimestamp || now,
+            `Evidence Sealed: ${sanitizedName}${platform ? ` (${platform})` : ''}`,
+            evidenceId,
+            platform,
+            senderHandle,
+            now
+          );
+        } catch (tlErr) {
+          console.warn('Non-fatal timeline event insertion warning:', tlErr.message);
+        }
 
         // 5. Run Immediate Integrity & Credibility Assessment
         const assessment = assessEvidenceIntegrity(evidenceId);

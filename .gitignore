@@ -13,3 +13,4 @@ Thumbs.db
 server/data/
 server/vault_storage/
 server/backups/
+.env*
